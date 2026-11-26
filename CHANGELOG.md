@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.11.0
 
 ### Added
 - An isolated Docker Compose Home Assistant test instance with deterministic weather, sensor-failure controls and acceptance dashboards.

@@ -53,5 +53,5 @@ weather:
 lovelace:
   mode: yaml
   resources:
-    - url: /local/forecast-card/weather-chart-card-ha.js?v=1a332caa54b3
+    - url: /local/forecast-card/weather-chart-card-ha.js?v=2a754e6dbc2a
       type: module

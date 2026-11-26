@@ -9,7 +9,7 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
 | FWC-03 | P0 | Complete | Default weather fallback and opt-in strict policy, with editor and invalid-sensor tests. Missing/unsupported units do not trigger fallback. |
 | FWC-04 | P1 | Complete | Independent current speed, gust and forecast wind precision; conversion precedes rounding and Beaufort remains integer. |
 | FWC-05 | P1 | Complete | Subscription identity, loading, rotation, stale callbacks, connection replacement and delayed unsubscribe covered by automated tests. |
-| FWC-06 | P1 | Implemented; visual acceptance pending | Optional responsive compact layout and icon opacity; browser coverage includes 320–1200 px, Swedish, RTL, title, clock and toggle variations. Final visual acceptance requires the real HA frontend. |
+| FWC-06 | P1 | Complete; visually accepted | Optional responsive compact layout and icon opacity; browser coverage includes 320–1200 px, Swedish, RTL, title, clock and toggle variations. The user approved visual acceptance in the isolated real HA frontend on 2026-11-26. |
 | FWC-07 | P2 | Complete | Independent current/hourly/daily temperature precision overrides legacy round_temp per reading; chart calculations retain precision. |
 | FWC-08 | P2 | Complete | Chart, subscription, timers, redraw frame and resize cleanup tested across hide, detach and reconnect. |
 | FWC-09 | P2 | Complete | Browser integration exercises bundled runtime with external requests blocked; online editor lookups and fresh provider data still require connectivity. |
@@ -153,6 +153,19 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
   recorder integration absent. Enabling HA's local recorder in the isolated
   fixture removed the rejection in a fresh settings-page and dashboard run;
   its database remains in the dedicated test volume.
+
+### Release preparation, 2026-11-26
+
+- The user approved the real Home Assistant visual acceptance results for
+  FWC-06. All twelve backlog items are complete; FWC-11 was already merged
+  separately into master.
+- Release candidate 1.11.0: Windows Node 26.13.0 and Ubuntu 24.04 container
+  Node 22.20.0 each passed `npm ci`, `npm run build`, `npm test` (62/62),
+  and `npm run test:rtl` (35/35). The independently built 591407-byte bundles
+  were byte-identical with SHA-256
+  `2a754e6dbc2a193326fd1028c1805ba52da3415bd2f73c57a99d02dc9ddeba25`.
+- CodeScene 1.0.58 against master reports main 1.84 -> 1.88 and editor
+  4.53 -> 4.74; the detailed source-level findings recorded above remain.
 
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.

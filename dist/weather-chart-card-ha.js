@@ -1421,7 +1421,7 @@ function kt(t){return t+.5|0}customElements.get("weather-chart-card-ha-editor")|
           ${this.renderExtraRows()}
           ${this.renderLastUpdated()}
         </div>
-        ${!1===t.show_version?"":J`<div class="card-version">v${"1.10.0"}</div>`}
+        ${!1===t.show_version?"":J`<div class="card-version">v${"1.11.0"}</div>`}
       </ha-card>
     `:J`
         <style>

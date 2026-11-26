@@ -400,8 +400,8 @@ const locale = {
     'tempLo': 'Temperatur min',
     'precip': 'Nederbörd',
     'feelsLike': 'Känns som',
-    'daily': 'Daglig',
-    'hourly': 'Per timme',
+    'daily': 'Dygnsprognos',
+    'hourly': 'Timprognos',
     'auto': 'Auto',
     'days': ['Söndag', 'Måndag', 'Tisdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lördag'],
     'months': ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'],
@@ -420,8 +420,8 @@ const locale = {
       'kg/m2': 'kg/m2'
     },
     'cardinalDirections': [
-        'N', 'N-NE', 'NE', 'E-NE', 'E', 'E-SE', 'SE', 'S-SE',
-        'S', 'S-SW', 'SW', 'W-SW', 'W', 'W-NW', 'NW', 'N-NW', 'N'
+        'N', 'N-NO', 'NO', 'O-NO', 'O', 'O-SO', 'SO', 'S-SO',
+        'S', 'S-SV', 'SV', 'V-SV', 'V', 'V-NV', 'NV', 'N-NV', 'N'
     ],
     'clear-night': 'Klar natt',
     'cloudy': 'Molnigt',

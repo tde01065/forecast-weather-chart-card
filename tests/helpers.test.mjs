@@ -70,6 +70,28 @@ test('#4 missing or unavailable alternative sensors fall back to the weather ent
   assert.equal(card.readSensorState(hass, undefined, 10), 10);
 });
 
+test('wind values keep their own source units, including fallback and unknown units', () => {
+  const card = makeCard({ windspeed: 'sensor.speed', wind_gust_speed: 'sensor.gust', units: { speed: 'm/s' } });
+  const weather = { state: 'sunny', attributes: { wind_speed: 36, wind_gust_speed: 72, wind_speed_unit: 'km/h', supported_features: 0 } };
+  card.hass = {
+    states: {
+      'weather.home': weather,
+      'sensor.speed': { state: '10', attributes: { unit_of_measurement: 'm/s' } },
+      'sensor.gust': { state: '36', attributes: { unit_of_measurement: 'km/h' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  assert.deepEqual(card.formatWindMeasurement(card.windSpeed, card.windSpeedSourceUnit), { value: 10, unit: 'm/s' });
+  assert.deepEqual(card.formatWindMeasurement(card.wind_gust_speed, card.windGustSourceUnit), { value: 10, unit: 'm/s' });
+  assert.deepEqual(card.readWindMeasurement(card._hass, 'sensor.missing', 36, 'km/h'), { value: 36, unit: 'km/h' });
+  assert.deepEqual(card.formatWindMeasurement(12, 'furlongs/h'), { value: 12, unit: 'furlongs/h' });
+  assert.deepEqual(card.formatWindMeasurement(36, undefined), { value: 36, unit: undefined });
+  for (const value of [null, undefined, '', ' ', 'unavailable', 'NaN', Infinity, -1, '12x', '0x10', [], true]) {
+    assert.equal(card.formatWindMeasurement(value, 'm/s').value, undefined);
+  }
+  assert.equal(card.formatWindMeasurement(0, 'm/s').value, 0);
+});
+
 test('#5 #13 the stub and the card share one set of defaults', () => {
   const stub = WeatherChartCard.getStubConfig({}, ['weather.home'], ['weather.home']);
   assert.equal(stub.entity, 'weather.home');
@@ -225,6 +247,64 @@ test('without auto-rotate only the forecast on screen stays subscribed', () => {
   card.handleForecastTypeToggle();
   assert.deepEqual(subscribed, ['daily', 'hourly']);
   assert.deepEqual(Object.keys(card._forecastSubscriptions), ['hourly']);
+});
+
+test('stale forecast callbacks cannot replace data after toggling or changing entity', () => {
+  const callbacks = [];
+  const supported = { state: 'sunny', attributes: { supported_features: 3 } };
+  const card = makeCard({}, {
+    states: { 'weather.home': supported, 'weather.other': supported },
+    connection: { subscribeMessage(callback, message) {
+      callbacks.push({ callback, message });
+      return Promise.resolve(() => {});
+    } },
+  });
+  card.drawChart = () => {};
+  card.updateChart = () => {};
+  card.syncForecastSubscriptions();
+  const daily = [{ temperature: 1 }];
+  callbacks[0].callback({ forecast: daily });
+  card.handleForecastTypeToggle();
+  assert.deepEqual(card.forecasts, [], 'old daily data is not displayed while hourly loads');
+  callbacks[1].callback({ forecast: [{ temperature: 2 }] });
+  card.handleForecastTypeToggle();
+  callbacks[0].callback({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(card.forecasts, [], 'closed daily callback cannot populate its replacement');
+  callbacks[2].callback({ forecast: daily });
+  card.setConfig({ entity: 'weather.other' });
+  card.syncForecastSubscriptions();
+  callbacks[2].callback({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(card.forecasts, [], 'data from the old entity is cleared');
+  callbacks[3].callback({ forecast: [{ temperature: 3 }] });
+  assert.deepEqual(card.forecasts, [{ temperature: 3 }]);
+});
+
+test('hiding a forecast closes its subscriptions and rejects late callbacks', () => {
+  const callbacks = [];
+  const card = makeCard({}, {
+    states: { 'weather.home': { state: 'sunny', attributes: { supported_features: 3 } } },
+    connection: { subscribeMessage(callback) {
+      callbacks.push(callback);
+      return Promise.resolve(() => {});
+    } },
+  });
+  card.drawChart = () => {};
+  card.syncForecastSubscriptions();
+  callbacks[0]({ forecast: [{ temperature: 10 }] });
+  card.setConfig({ entity: 'weather.home', show_forecast: false });
+  card.syncForecastSubscriptions();
+  callbacks[0]({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(Object.keys(card._forecastSubscriptions), []);
+  assert.notDeepEqual(card.forecasts, [{ temperature: 99 }]);
+});
+
+test('Swedish forecast names and cardinal directions are localized', () => {
+  const card = makeCard({ locale: 'sv' });
+  assert.equal(card.ll('daily'), 'Dygnsprognos');
+  assert.equal(card.ll('hourly'), 'Timprognos');
+  assert.equal(card.getWindDirLabel(45), 'NO');
+  assert.equal(card.getWindDirLabel('NE'), 'NO');
+  assert.equal(card.getWindDirLabel(225), 'SV');
 });
 
 test('a single-point temperature gradient has a valid stop offset', () => {
@@ -511,6 +591,11 @@ test('a compass name gets the same arrow as its bearing in degrees', () => {
   // The arrow shows where the wind blows to: a north wind points south.
   assert.equal(card.getWindDirIcon('N'), 'arrow-down');
   assert.equal(card.getWindDirIcon('WNW'), 'arrow-bottom-right');
+  assert.equal(card.getWindDir(-45), card.getWindDir(315));
+  assert.equal(card.getWindDir('405'), card.getWindDir(45));
+  assert.equal(card.getWindDirIcon(720), card.getWindDirIcon(0));
+  assert.equal(card.getWindDir('unavailable'), null);
+  assert.equal(card.getWindDirIcon(Infinity), null);
 });
 
 test('the wind forecast names the direction under the arrow, unless turned off', () => {

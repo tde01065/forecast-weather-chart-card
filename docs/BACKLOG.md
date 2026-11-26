@@ -4,20 +4,47 @@ Status as of 2026-11-26. See BASELINE.md for historical evidence and item entrie
 
 | ID | Priority | Status | Problem / acceptance direction |
 |---|---|---|---|
-| FWC-01 | P0 | Static defect identified | Alternative wind speed and gust sensors are read via readSensorState but converted using weather entity wind_speed_unit in renderAttributes. Carry source value and unit together, convert from actual source, test mixed units, separate speed/gust units and weather fallback. Forecasts use resolved forecast entity units. |
-| FWC-02 | P0 | Static defect identified | Reject invalid, missing, nonfinite and unsupported values/units rather than coercing null/empty to zero or labeling unconverted values as target unit. Test unknown/unavailable, zero, malformed strings, unsupported units and supported Beaufort conversion (inverse approximate). Validate and normalize numeric wind bearings including wraparound. |
+| FWC-01 | P0 | Partial | Independent wind source units and selected forecast entity unit are implemented; more fallback edge cases need verification. See subsequent work below. |
+| FWC-02 | P0 | Partial | Wind speeds and bearings are validated; other measurements and Beaufort edge cases remain. See subsequent work below. |
 | FWC-03 | P0 | Design required | Explicit alternative-sensor fallback policy. Upstream falls back to weather data for absent/unavailable sensors; existing tests intentionally cover that behavior. Preserve default compatibility, allow strict sensor-only display so instrument data is not silently replaced by forecast/provider values. Define invalid-value and missing-unit semantics; consider source indication. |
 | FWC-04 | P1 | Feature required | Separate conversion from presentation. Configurable current speed and gust precision (desired one decimal), forecast wind precision (desired integer), Beaufort integer. Preserve existing defaults; test both units and rounding boundaries. |
-| FWC-05 | P1 | Static risk, reproduce first | Forecast type toggle may retain previous forecasts until first target payload; callbacks check type but not subscription identity. Test rapid toggles, delayed callbacks, entity changes and disconnect/reconnect. Ensure stale data never renders as another type/entity; define loading/cache behavior. |
+| FWC-05 | P1 | Partial | Subscription identity and loading behavior fixed and tested; further asynchronous edge cases remain. See subsequent work below. |
 | FWC-06 | P1 | Feature required | Optional compact responsive header layout, default unchanged. Desired main icon 60 px with configurable opacity, alignment with temperature top, near toggle, no wasted vertical space. Use layout rather than hard-coded offsets or private CSS overrides. Test narrow/wide widths, long translations, RTL, toggle hidden, clock and title variations. |
 | FWC-07 | P2 | Feature required | Independent current, hourly and daily temperature precision. Existing forecast.round_temp also affects current. Preserve legacy configuration semantics when new options absent. |
-| FWC-08 | P2 | Static risk, reproduce first | Verify Chart.js teardown on disconnect, cancellation of scheduled redraws and subscriptions, clock and resize lifecycle. drawChart destroys on redraw; missing canvas may schedule repeated requestAnimationFrame. Test detach/reconnect, hidden forecast and rapid config changes; fix only proven issues. |
+| FWC-08 | P2 | Partial | Chart and subscription cleanup improved, with reconnect and hidden forecast tests; complete lifecycle coverage remains. See subsequent work below. |
 | FWC-09 | P2 | Partial baseline PASS | Bundle already includes local animated icons; offline animated-icon browser test passed. Extend regression to full runtime rendering and toggling without external browser requests. Editor geocoding/timezone lookups may be optional online functions; distinguish editor from runtime. Do not claim weather-provider data is available offline. |
-| FWC-10 | P3 | Feature required | Improve Swedish toggle labels (proposed Dygnsprognos / Timprognos) and cardinal directions (e.g. NE -> NO). Confirm terminology, preserve locale fallback and other languages. Check layout impact of longer labels. |
-| FWC-11 | P1 | Implementation and validation complete; pending PR | Windows (Node 26.13.0, npm 11.20.0): regression reproduced before fix (Windows transform returned null; 1 failed, 5 passed); after path normalization, npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Independent Linux validation in node:22-bookworm-slim (Debian 12, Node 22.23.4, npm 10.9.9): npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Linux bundle is 580441 bytes, SHA-256 1B20E67A913A0173A6BBA9B880CC2A2515285B06D8F1E52D478BC6CE1D6238F7; byte-identical to the Windows bundle and historical upstream artifact. |
-| FWC-12 | P2 | Feature required | Optional per-attribute localized labels, especially Wind and Gust (Swedish Vind / Byvind). Render real DOM text, accessible and responsive, default off. Proposed attribute_labels mapping; agree on schema and editor UX before implementation. Test independent visibility and gust-only rendering (current outer wind group condition may omit gust when other fields hidden). |
+| FWC-10 | P3 | Partial | Swedish forecast labels and compass names corrected; layout testing for longer labels remains. |
+| FWC-11 | P1 | Complete; merged and verified | Windows (Node 26.13.0, npm 11.20.0): regression reproduced before fix (Windows transform returned null; 1 failed, 5 passed); after path normalization, npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Independent Linux validation in node:22-bookworm-slim (Debian 12, Node 22.23.4, npm 10.9.9): npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Linux bundle is 580441 bytes, SHA-256 1B20E67A913A0173A6BBA9B880CC2A2515285B06D8F1E52D478BC6CE1D6238F7; byte-identical to the Windows bundle and historical upstream artifact. |
+| FWC-12 | P2 | Partial | Gust-only rendering fixed and browser-tested; configurable labels and editor remain outstanding. |
 
 ## Technical debt / investigation
+
+### Subsequent work on `feature/forecast-card-improvements`
+
+- FWC-01 and FWC-02 remain partial: wind source units are tracked independently,
+  invalid wind values are hidden, and numeric bearings wrap. Alternative
+  sensor fallback for invalid values and measurement validation outside wind
+  remain outstanding. Unsupported or absent wind units are displayed as
+  reported rather than being presented as a converted unit.
+- FWC-05 and FWC-08 remain partial: a regression reproduced stale daily data
+  during an hourly switch. Subscriptions are identified by instance and
+  entity; stale callbacks are ignored, data is cleared while loading, and
+  charts, subscriptions, timers and pending resize/theme work are cleaned up
+  on disconnect. More lifecycle and asynchronous edge cases need coverage.
+- FWC-10 remains partial: Swedish forecast names and cardinal directions were
+  corrected, but responsive testing of the longer labels remains outstanding.
+- FWC-12 remains partial: gust-only rendering is fixed; configurable labels
+  and their editor are not implemented.
+- FWC-03, FWC-04, FWC-06, FWC-07 and the expanded FWC-09 offline scenarios
+  remain unimplemented. This is not a completed backlog implementation.
+- Validation of this partial branch: Windows Node 22.23.5 and Linux
+  `node:22-bookworm-slim` Node 22.23.4 each passed `npm ci`, `npm run build`,
+  50 unit tests and 21 browser tests. An earlier Windows browser run exposed a
+  Chart.js canvas reuse error (20/21); chart cleanup was adjusted and the
+  browser suite then passed twice on Windows and once on Linux. Both builds
+  generated 583088 bytes with SHA-256
+  `fd8309f1a7dfbe94f4e6b7a99cf898a1d5d62f3c5961c1574c668413e34529e0`.
+  This evidence does not establish completion of the outstanding requirements.
 
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.

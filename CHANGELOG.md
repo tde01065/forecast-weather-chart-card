@@ -9,6 +9,9 @@
 - `show_version`: hide the card version in the bottom corner (default `true`, shown as before).
 
 ### Fixed
+- Current wind speed and gust use their own sensor units; forecast wind uses its forecast entity's unit. Values with unknown or missing units are not relabelled as converted values, and invalid wind speeds are hidden.
+- Old forecast subscription callbacks no longer replace the selected forecast after switching or reconfiguration. Closing a card destroys its chart and subscriptions and cancels pending resize and theme redraw work.
+- Swedish forecast labels and compass directions use Swedish terminology. A gust can be displayed on its own.
 - The card version was drawn on top of the card's last row (wind, condition icons or the last-changed line) and could cover it. It now has its own line below the content.
 - Sunrise and sunset came from the card's own approximation even for the Home Assistant home location, so they could differ by a minute or so from `sun.sun` and the rest of Home Assistant. Without a custom card location the card now shows `sun.sun`'s times; its own calculation is kept for a custom location, or when `sun.sun` is missing or unavailable.
 - With a custom card location but no `sun.sun` entity, sunrise and sunset were hidden. They are now calculated.

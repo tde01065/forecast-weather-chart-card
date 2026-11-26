@@ -241,6 +241,11 @@ units:
 | precipitation        | string  | source unit              | Convert to 'mm', 'cm', 'in', 'l/m2' or 'kg/m2'. Applies to bars, labels and tooltips.              |
 | visibility           | string  | none                     | Convert to 'km', 'm', 'mi', 'yd' or 'ft'.                                                          |
 
+Wind speed and gust sensors use their own `unit_of_measurement`; forecast wind
+uses the selected forecast entity's `wind_speed_unit`. If a wind unit is
+missing or unsupported, the value is shown without conversion, with its source
+unit if supplied. Invalid, nonfinite or negative wind speeds are hidden.
+
 
 ## 📸 Example Configurations
 

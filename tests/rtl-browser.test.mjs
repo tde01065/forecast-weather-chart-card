@@ -12,6 +12,61 @@ before(async () => {
 });
 after(async () => { await browser?.close(); });
 
+test('wind source units and subscription identity survive switching and reconnect', async () => {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }));
+    await page.goto('http://wind.test/');
+    await page.addScriptTag({ content: bundle });
+    await page.evaluate(() => {
+      const card = document.createElement('weather-chart-card-ha');
+      window.subscriptions = [];
+      card.setConfig({
+        entity: 'weather.home', windspeed: 'sensor.speed', wind_gust_speed: 'sensor.gust',
+        show_wind_direction: false, show_wind_speed: false, show_wind_gust_speed: true,
+        show_sun: false, units: { speed: 'm/s' }, show_forecast_toggle: true,
+        forecast: { hourly_entity: 'weather.hourly', disable_animation: true },
+      });
+      card.hass = {
+        language: 'en', config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+        states: {
+          'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', wind_speed_unit: 'km/h', supported_features: 3 } },
+          'weather.hourly': { state: 'sunny', attributes: { wind_speed_unit: 'mph', supported_features: 3 } },
+          'sensor.speed': { state: '10', attributes: { unit_of_measurement: 'm/s' } },
+          'sensor.gust': { state: '36', attributes: { unit_of_measurement: 'km/h' } },
+        },
+        connection: { subscribeMessage(callback, message) {
+          const entry = { callback, message, closed: false };
+          window.subscriptions.push(entry);
+          return Promise.resolve(() => { entry.closed = true; });
+        } },
+      };
+      document.body.append(card);
+      window.card = card;
+    });
+    await page.waitForFunction(() => window.card.shadowRoot.querySelector('.wind-gust-speed'));
+    assert.equal(await page.locator('weather-chart-card-ha').locator('.wind-gust-speed').textContent(), '10 m/s');
+    await page.evaluate(() => window.subscriptions[0].callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 20, wind_speed: 36 }] }));
+    await page.waitForFunction(() => window.card.forecastChart);
+    await page.evaluate(() => window.card.handleForecastTypeToggle());
+    await page.waitForFunction(() => window.subscriptions.length === 2);
+    assert.deepEqual(await page.evaluate(() => window.card.forecasts), []);
+    await page.evaluate(() => {
+      window.subscriptions[0].callback({ forecast: [{ temperature: 99 }] });
+      window.subscriptions[1].callback({ forecast: [{ datetime: '2026-10-18T13:00:00Z', temperature: 18, wind_speed: 10 }] });
+    });
+    await page.waitForFunction(() => window.card.shadowRoot.querySelector('.wind-speed')?.textContent === '4');
+    await page.evaluate(() => window.card.remove());
+    assert.equal(await page.evaluate(() => window.card.forecastChart), null);
+    await page.evaluate(() => document.body.append(window.card));
+    await page.waitForFunction(() => window.subscriptions.length === 3);
+    assert.deepEqual(await page.evaluate(() => window.card.forecasts), []);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
 for (const {name, forecast, expected} of [
   {name:'defaults', forecast:{}, expected:[[], [5, 5]]},
   {name:'solid', forecast:{temperature1_line_style:'solid', temperature2_line_style:'solid'}, expected:[[], []]},

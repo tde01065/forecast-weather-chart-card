@@ -85,6 +85,52 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
   the existing installed dependencies. Bundles were byte-identical with SHA-256
   `ae78a70275bbb317e3c56e1f1b2a68322c4a7e875b6fcd75fae44937f2b4b643`.
 
+### Compact layout follow-up, 2026-11-26
+
+- FWC-06 remains **visual acceptance pending**. The compact title and forecast
+  toggle share a row; without a title the toggle shares the conditions row.
+  The icon aligns with the temperature, attributes no longer wrap prematurely,
+  and the default layout and chart sizing are unchanged. Compact icons scale
+  down when necessary. The toggle no longer triggers a current-conditions tap
+  action when nested in a titleless compact card.
+- Real HA 2026.11.3, Swedish, static 60 px icon, identical fixture data: header
+  height is measured from the card top to the chart top, in pixels.
+
+  | Width | Variant | Before | After |
+  | --- | --- | ---: | ---: |
+  | 320 | Default, title | 229.4 | 229.4 |
+  | 320 | Compact, title | 315.4 | 195.4 |
+  | 320 | Default, no title | 194.0 | 194.0 |
+  | 320 | Compact, no title | 258.6 | 188.2 |
+  | 600 | Default, title | 229.4 | 229.4 |
+  | 600 | Compact, title | 263.4 | 195.4 |
+  | 600 | Default, no title | 194.0 | 194.0 |
+  | 600 | Compact, no title | 206.6 | 166.6 |
+
+  Charts stayed 180 px high and the same width for matched cards. The existing
+  default titleless layout overlaps its condition and icon at 320 px; it was
+  not changed because preserving that layout was required. Compact controls
+  were checked for overlap; browser regressions also cover RTL, long labels,
+  clock/date, hidden toggle and both icon types.
+- The dedicated comparison view is responsive: all four card widths measured
+  384 px at a 1440 px viewport and 374 px at a 390 px viewport. Separate views
+  retain fallback/recovery, precision and static/animated checks. Real HA
+  automation exercised forecast switching and independent sensor failures and
+  recovery. All chart canvases contained rendered non-white pixels. One
+  frontend rejection was reported as `Object`; the earlier fixture run saw
+  `unknown_command`. Whether these share a cause is unknown.
+- The component stylesheet and current measurement/description resolution
+  were extracted. Local CodeScene 1.0.58 against master reports `main.js`
+  1.84 -> 1.88 (previous branch result 1.68), and editor 4.53 -> 4.74.
+  Individual degraded complexity findings remain in rendering, configuration,
+  subscriptions and editor probing; the stylesheet has a large-method finding,
+  and description resolution remains complex. No findings were suppressed.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0 passed
+  `npm run build`, `npm test` (62/62) and `npm run test:rtl` (35/35).
+  Linux used `npm ci`; Windows used existing dependencies. Both independently
+  built bundles had SHA-256
+  `f303bfcd0a090d58e69187e55fd1ab2ae350b685242368876c1084d4b7895d38`.
+
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.
 - TD-03: npm ci reported deprecated ESLint 9.39.5.

@@ -24,14 +24,19 @@ has controls for speed and gust sensor failure and recovery. The fallback and
 strict cards should react independently. Use the card button to switch
 forecasts.
 
-The acceptance dashboard is YAML-managed. To exercise the visual editor,
+The first view compares identical default and compact cards with and without
+titles. Separate views cover fallback/recovery, precision, and static versus
+animated icons. The acceptance dashboard is YAML-managed. To exercise the visual editor,
 create a separate UI-managed dashboard in **Settings > Dashboards**, add a
 Weather Chart Card there, and select `weather.fixture_weather`. This is still
 the same isolated test instance. The shared card resource is already configured.
 
 To update the card, run `npm run build` again and hard-refresh the browser.
 The whole `dist` directory is mounted read-only, so container rebuilds are not
-needed. HA and browser caches may require a hard refresh.
+needed. HA and browser caches may require a hard refresh. When sharing an
+updated fixture with existing browser sessions, change the resource query
+string in `configuration.yaml` to the new bundle hash prefix and restart this
+test container to make the browser request the new resource.
 
 ```powershell
 docker compose -f tests\ha\compose.yaml stop

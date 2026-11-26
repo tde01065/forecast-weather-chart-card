@@ -174,9 +174,9 @@ units:
 | animated_icons        | boolean | true                     | Use the animated icons bundled with the card (no network needed). `false` uses MDI icons.          |
 | icon_style            | string  | 'style1'                 | Animated icon set: 'style1' (filled) and 'style2' (outline) by Bas Milius, 'style3' by amCharts. |
 | icons_size            | number  | 30                       | The size of the animated or custom icons in pixels.                                                |
-| main_icon_size        | number  | 150                      | Size of main current weather icon in pixels.                                                       |
+| main_icon_size        | number  | 150                      | Size of main current weather icon in pixels; compact layouts may scale it down to fit.             |
 | main_icon_opacity     | number  | 1                        | Main icon opacity from 0 to 1; invalid values use 1.                                              |
-| compact               | boolean | false                    | Use a compact, responsive header and main section.                                                |
+| compact               | boolean | false                    | Use a compact, responsive header and main section; the title and forecast toggle share a row.     |
 | alternative_sensor_fallback | string | weather              | `weather` substitutes weather data when a configured alternative is invalid; `strict` leaves it empty. Invalid values use `weather`. |
 | precision             | object  | none                     | Independent current measurement precision; see [precision](#precision-and-attribute-labels).       |
 | attribute_labels      | object  | none                     | Optional text labels for wind speed and gust; see [precision](#precision-and-attribute-labels).    |

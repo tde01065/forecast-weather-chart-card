@@ -13,6 +13,7 @@
 - `show_version`: hide the card version in the bottom corner (default `true`, shown as before).
 
 ### Fixed
+- Compact headers place the title and toggle together, align the weather icon with current conditions, and avoid the extra vertical row and attribute wrapping.
 - Forecast charts rebuild when their source or display units change, keeping converted values and tooltip labels consistent.
 - Editor forecast probes reject stale callbacks after connection replacement and clean up even when the first event arrives synchronously.
 - Unsupported pressure units that happen to match JavaScript object property names remain unconverted.

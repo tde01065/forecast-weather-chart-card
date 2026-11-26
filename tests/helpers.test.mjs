@@ -130,6 +130,30 @@ test('alternative temperature and pressure measurements use the selected source 
   assert.deepEqual(card.formatTemperatureMeasurement(30, 'unknown'), { value: 30, unit: 'unknown' });
 });
 
+test('current measurement resolution preserves zero, source units and strict visibility fallback', () => {
+  const card = makeCard({ temp: 'sensor.temp', visibility: 'sensor.visibility', alternative_sensor_fallback: 'strict' });
+  const hass = {
+    states: {
+      'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', visibility: 10, visibility_unit: 'km', supported_features: 0 } },
+      'sensor.temp': { state: '0', attributes: { unit_of_measurement: '°F' } },
+      'sensor.visibility': { state: '0', attributes: { unit_of_measurement: 'mi' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  card.hass = hass;
+  assert.equal(card.temperature, '0');
+  assert.equal(card.temperatureSourceUnit, '°F');
+  assert.equal(card.visibility, '0');
+  assert.equal(card.visibilitySourceUnit, 'mi');
+  hass.states['sensor.visibility'] = { state: 'unavailable', attributes: { unit_of_measurement: 'mi' } };
+  card.hass = hass;
+  assert.equal(card.visibility, undefined);
+  assert.equal(card.visibilitySourceUnit, 'km');
+  card.setConfig({ entity: 'weather.home', visibility: 'sensor.visibility' });
+  assert.equal(card.visibility, 10);
+  assert.equal(card.visibilitySourceUnit, 'km');
+});
+
 test('changing fallback policy immediately re-evaluates current sensors', () => {
   const card = makeCard({ windspeed: 'sensor.wind' });
   const hass = {
@@ -917,7 +941,7 @@ test('sun times come from sun.sun unless the card has its own location', () => {
 test('#61 description_attribute reads an attribute, falling back to the weather description', () => {
   const states = {
     'weather.home': { state: 'sunny', attributes: { description: 'Weather text', summary: 'Own summary' } },
-    'sensor.owm_summary': { state: '2026-11-10T12:00:00+00:00', attributes: { content: 'Rain from 15:00, clearing tonight.' } },
+    'sensor.owm_summary': { state: '2026-11-10T12:00:00+00:00', attributes: { content: 'Rain from 15:00, clearing tonight.', details: { rain: true }, blank: '  ' } },
     'sensor.plain': { state: 'Plain state text', attributes: {} },
     'sensor.down': { state: 'unavailable', attributes: { content: '' } },
   };
@@ -936,6 +960,10 @@ test('#61 description_attribute reads an attribute, falling back to the weather 
   assert.equal(read({ description: 'sensor.gone', description_attribute: 'content' }), 'Weather text');
   assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'nope' }), 'Weather text');
   assert.equal(read({ description: 'sensor.down', description_attribute: 'content' }), 'Weather text');
+  assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'details' }), '{"rain":true}');
+  assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'blank', alternative_sensor_fallback: 'strict' }), undefined);
+  assert.equal(read({ description: 'sensor.down', alternative_sensor_fallback: 'strict' }), undefined);
+  assert.equal(read({ description_attribute: 'missing', alternative_sensor_fallback: 'strict' }), 'Weather text');
 });
 
 test('a missing last_changed timestamp does not break the card', () => {

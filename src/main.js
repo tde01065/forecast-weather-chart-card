@@ -10,6 +10,8 @@ import { DEFAULTS, FORECAST_DEFAULTS, UNITS_DEFAULTS } from './defaults.js';
 import { measurementNumber, numericBearing, convertTemperature, formatPressure, convertVisibility } from './measurements.js';
 import iconData from './icon-data.js';
 import { GestureDetector, hasAction } from './actions.js';
+import { renderCardStyles } from './card-styles.js';
+import { resolveCurrentMeasurements, resolveDescription } from './current-measurements.js';
 import {LitElement, html, nothing} from 'lit';
 import './weather-chart-card-editor.js';
 import {Chart, registerables} from 'chart.js';
@@ -18,6 +20,7 @@ Chart.register(...registerables, ChartDataLabels);
 
 // Data URIs of the bundled icons, built on first use and shared by every card.
 const bundledIconUris = {};
+const stopPropagation = (event) => event.stopPropagation();
 
 // Injected by the rollup build from package.json; 'dev' when run unbundled (tests).
 const CARD_VERSION = typeof __CARD_VERSION__ !== 'undefined' ? __CARD_VERSION__ : 'dev';
@@ -128,37 +131,9 @@ set hass(hass) {
   this.unitVisibility = this.config.units.visibility || weatherAttributes.visibility_unit;
   this.unitTemperature = this.config.units.temperature || weatherAttributes.temperature_unit;
 
-  if (this.weather && this.weather.attributes) {
-    const attributes = this.weather.attributes;
-    this.temperature = this.readSensorState(hass, this.config.temp, attributes.temperature);
-    this.temperatureSourceUnit = this.sensorSuppliesValue(hass, this.config.temp) ? hass.states[this.config.temp].attributes?.unit_of_measurement : attributes.temperature_unit;
-    this.humidity = this.readSensorState(hass, this.config.humid, attributes.humidity);
-    this.pressure = this.readSensorState(hass, this.config.press, attributes.pressure);
-    this.pressureSourceUnit = this.sensorSuppliesValue(hass, this.config.press) ? hass.states[this.config.press].attributes?.unit_of_measurement : attributes.pressure_unit;
-    this.uv_index = this.readSensorState(hass, this.config.uv, attributes.uv_index);
-    const speed = this.readWindMeasurement(hass, this.config.windspeed, attributes.wind_speed, attributes.wind_speed_unit);
-    this.windSpeed = speed.value;
-    this.windSpeedSourceUnit = speed.unit;
-    this.dew_point = this.readSensorState(hass, this.config.dew_point, attributes.dew_point);
-    this.dewPointSourceUnit = this.sensorSuppliesValue(hass, this.config.dew_point) ? hass.states[this.config.dew_point].attributes?.unit_of_measurement : attributes.temperature_unit;
-    const gust = this.readWindMeasurement(hass, this.config.wind_gust_speed, attributes.wind_gust_speed, attributes.wind_speed_unit);
-    this.wind_gust_speed = gust.value;
-    this.windGustSourceUnit = gust.unit;
-    if (this.sensorSuppliesValue(hass, this.config.visibility)) {
-      this.visibility = hass.states[this.config.visibility].state;
-      this.visibilitySourceUnit = hass.states[this.config.visibility].attributes?.unit_of_measurement;
-    } else {
-      this.visibility = this.readSensorState(hass, this.config.visibility, attributes.visibility);
-      this.visibilitySourceUnit = attributes.visibility_unit;
-    }
-
-    this.windDirection = this.readSensorState(hass, this.config.winddir, attributes.wind_bearing, true);
-
-    this.feels_like = this.readSensorState(hass, this.config.feels_like, attributes.apparent_temperature);
-    this.feelsLikeSourceUnit = this.sensorSuppliesValue(hass, this.config.feels_like) ? hass.states[this.config.feels_like].attributes?.unit_of_measurement : attributes.temperature_unit;
-    this.description = this.readDescription(hass, attributes.description);
+  if (this.weather?.attributes) {
+    Object.assign(this, resolveCurrentMeasurements(this, hass, this.weather.attributes));
   }
-
   // A theme switch changes the CSS variables the chart reads its colors from.
   // Redraw once the new theme has been applied to the page.
   const themes = hass.themes || {};
@@ -171,7 +146,6 @@ set hass(hass) {
     });
   }
   this._themeKey = themeKey;
-
   if (this.weather) {
     this.syncForecastSubscriptions();
     // setConfig and connectedCallback can run before hass arrives, when the
@@ -251,22 +225,7 @@ formatWindMeasurement(value, sourceUnit, targetUnit = this.unitSpeed, precision 
  * back to the weather entity's own description.
  */
 readDescription(hass, fallback) {
-  const attribute = this.config.description_attribute;
-  if (!attribute) {
-    const id = this.config.description;
-    if (this.hasSensorState(hass, id) && String(hass.states[id].state ?? '').trim()) return hass.states[id].state;
-    return id && this.config.alternative_sensor_fallback === 'strict' ? undefined : fallback;
-  }
-  const entityId = this.config.description || this.config.entity;
-  const stateObj = entityId ? hass.states[entityId] : null;
-  if (this.config.description && !this.hasSensorState(hass, entityId)) {
-    return this.config.alternative_sensor_fallback === 'strict' ? undefined : fallback;
-  }
-  const value = stateObj && stateObj.attributes ? stateObj.attributes[attribute] : undefined;
-  if (value === undefined || value === null || String(value).trim() === '') {
-    return this.config.description && this.config.alternative_sensor_fallback === 'strict' ? undefined : fallback;
-  }
-  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return resolveDescription(this, hass, fallback);
 }
 
 currentForecastType() {
@@ -2299,8 +2258,6 @@ updateChart({ forecasts, forecastChart } = this) {
     const forecastOnly = config.show_main === false;
     const showForecast = config.show_forecast !== false;
     const actionable = this.hasCardActions();
-    const iconOpacity = typeof config.main_icon_opacity === 'number' && Number.isFinite(config.main_icon_opacity)
-      && config.main_icon_opacity >= 0 && config.main_icon_opacity <= 1 ? config.main_icon_opacity : 1;
 
     if (!weather || !weather.attributes) {
       return html`
@@ -2320,307 +2277,11 @@ updateChart({ forecasts, forecastChart } = this) {
       `;
     }
     return html`
-      <style>
-        ha-card {
-          ${config.title ? 'padding-bottom: 8px;' : ''}
-          position: relative;
-          overflow: hidden;
-        }
-        ha-icon {
-          color: var(--paper-item-icon-color);
-        }
-        img {
-          width: ${config.icons_size}px;
-          height: ${config.icons_size}px;
-        }
-        .card {
-          padding-top: ${config.title ? '0px' : '16px'};
-          padding-right: 16px;
-          padding-bottom: ${config.show_last_changed === true ? '2px' : '16px'};
-          padding-left: 16px;
-        }
-        .main {
-          display: flex;
-          align-items: ${config.title ? 'center' : 'flex-start'};
-          justify-content: space-between;
-          font-size: ${config.current_temp_size}px;
-          margin-bottom: 10px;
-          position: ${config.title ? 'relative' : 'static'};
-          ${config.title ? '' : `min-height: ${59 + (parseInt(config.main_icon_size, 10) || 150) / 2}px;`}
-        }
-        .main .weather-icon {
-          position: absolute;
-          left: 50%;
-          top: ${config.title ? '10px' : '75px'};
-          transform: translate(-50%, -50%);
-          z-index: 1;
-          opacity: ${iconOpacity};
-        }
-        .main .weather-icon ha-icon {
-          --mdc-icon-size: ${config.main_icon_size || 150}px;
-        }
-        .main .weather-icon img {
-          width: ${config.main_icon_size || 150}px;
-          height: ${config.main_icon_size || 150}px;
-        }
-        .main .temp-info {
-          display: flex;
-          flex-direction: column;
-          z-index: 2;
-        }
-        .main .temp-info > div {
-          line-height: 1.2;
-        }
-        .main .current-temp {
-          font-size: ${config.current_temp_size}px;
-          font-weight: 300;
-          direction: ltr;
-          unicode-bidi: isolate;
-        }
-        .main .current-condition {
-          font-size: 18px;
-          margin-top: 4px;
-        }
-        .current-time {
-          position: absolute;
-          top: 24px;
-          right: 16px;
-          inset-inline-start: initial;
-          inset-inline-end: 16px;
-          display: flex;
-          flex-direction: column;
-          align-items: flex-end;
-          z-index: 1;
-          font-size: ${config.time_size}px;
-        }
-        .date-text {
-          font-size: ${config.day_date_size}px;
-          color: var(--secondary-text-color);
-          direction: var(--direction, inherit);
-        }
-        .main span {
-          font-size: 18px;
-          color: var(--secondary-text-color);
-        }
-        .attributes {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 6px;
-      	  font-weight: 300;
-        }
-        .chart-container {
-          position: relative;
-          height: ${config.forecast.chart_height}px;
-          width: 100%;
-          direction: ltr;
-          margin-top: ${forecastOnly && config.show_forecast_toggle ? '40px' : '0px'};
-        }
-        .conditions {
-          display: flex;
-          justify-content: space-around;
-          align-items: center;
-          margin: 0px 5px 0px 5px;
-      	  cursor: pointer;
-        }
-        .forecast-item {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          margin: 1px;
-        }
-        .extra-row {
-          display: flex;
-          justify-content: space-around;
-          align-items: center;
-          margin: 0px 5px;
-          font-weight: 300;
-          cursor: pointer;
-        }
-        .extra-detail {
-          display: flex;
-          flex: 1 1 0;
-          justify-content: center;
-          align-items: center;
-          margin: 1px;
-          min-width: 0;
-        }
-        .extra-detail ha-icon {
-          --mdc-icon-size: 15px;
-          margin-inline-end: 1px;
-        }
-        .extra-value {
-          font-size: 11px;
-        }
-        .extra-unit {
-          font-size: 9px;
-          margin-inline-start: 1px;
-        }
-        .wind-details {
-          display: flex;
-          justify-content: space-around;
-          align-items: center;
-          font-weight: 300;
-        }
-        .wind-detail {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          margin: 1px;
-        }
-        .wind-main {
-          display: flex;
-          align-items: center;
-        }
-        .wind-details.with-direction {
-          margin-top: ${config.forecast.condition_icons === false ? '0px' : '-4px'};
-        }
-        .wind-dir-label {
-          font-size: 9px;
-          line-height: 10px;
-          opacity: 0.7;
-          white-space: nowrap;
-        }
-        .wind-detail ha-icon {
-          --mdc-icon-size: 15px;
-          margin-right: 1px;
-          margin-inline-start: initial;
-          margin-inline-end: 1px;
-        }
-        .wind-icon {
-          margin-right: 1px;
-          margin-inline-start: initial;
-          margin-inline-end: 1px;
-          position: relative;
-	        bottom: 1px;
-        }
-        .wind-speed {
-          font-size: 11px;
-          margin-right: 1px;
-          margin-inline-start: initial;
-          margin-inline-end: 1px;
-        }
-        .wind-unit {
-          font-size: 9px;
-          margin-left: 1px;
-          margin-inline-start: 1px;
-          margin-inline-end: initial;
-        }
-        .main .feels-like {
-          font-size: 13px;
-          margin-top: 5px;
-          font-weight: 400;
-        }
-        .main .description {
-	        font-style: italic;
-          font-size: 13px;
-          margin-top: 5px;
-          font-weight: 400;
-          /* Summary attributes can be whole sentences: wrap, and stop at three lines. */
-          overflow-wrap: anywhere;
-          display: -webkit-box;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 3;
-          line-clamp: 3;
-          overflow: hidden;
-        }
-        .card-version {
-          /* In the flow, not absolute: an overlay covered the last row (wind, icons). */
-          padding: 0 6px 2px;
-          text-align: right; /* physical, not end: bottom-right in RTL too */
-          font-size: 9px;
-          line-height: 1;
-          color: var(--secondary-text-color);
-          opacity: 0.6;
-          pointer-events: none;
-        }
-        .updated {
-          font-size: 13px;
-          align-items: right;
-          font-weight: 300;
-          margin-bottom: 1px;
-        }
-        .forecast-toggle {
-          cursor: pointer;
-          background: var(--primary-color);
-          color: var(--text-primary-color);
-          border: none;
-          border-radius: 4px;
-          padding: 6px 10px;
-          font-size: 12px;
-          font-weight: 700;
-          opacity: 0.9;
-          transition: opacity 0.2s;
-          margin-top: 4px;
-        }
-        .forecast-toggle:hover {
-          opacity: 1;
-        }
-        .attributes .water-percent,
-        .attributes .pressure,
-        .attributes .dew-point,
-        .attributes .visibility,
-        .attributes .uv-index,
-        .attributes .wind-speed-attribute,
-        .attributes .wind-gust-speed {
-          direction: ltr;
-          unicode-bidi: isolate;
-        }
-        .forecast-toggle {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-        }
-        .forecast-toggle .auto-rotate-icon {
-          --mdc-icon-size: 14px;
-          color: inherit;
-        }
-        .card.compact .current-time {
-          position: static;
-          flex-direction: row;
-          justify-content: flex-end;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 4px 8px;
-          margin-bottom: 4px;
-        }
-        .card.compact .main {
-          position: static;
-          min-height: 0;
-          align-items: flex-start;
-          justify-content: flex-start;
-          gap: 12px;
-        }
-        .card.compact .temp-info {
-          min-width: 0;
-        }
-        .card.compact .weather-icon {
-          position: static;
-          transform: none;
-          flex: 0 0 auto;
-        }
-        .card.compact .attributes {
-          flex-wrap: wrap;
-          gap: 4px 12px;
-        }
-        .card.compact .chart-container {
-          margin-top: 0;
-        }
-        .actionable {
-          cursor: pointer;
-          -webkit-user-select: none;
-          user-select: none;
-          -webkit-touch-callout: none;
-        }
-        .actionable:focus-visible {
-          outline: 2px solid var(--primary-color);
-          outline-offset: 2px;
-        }
-      </style>
+      ${renderCardStyles(config)}
 
-      <ha-card header="${config.title}">
+      <ha-card header="${config.compact === true ? '' : config.title}">
         <div class="card ${config.compact === true ? 'compact' : ''}">
-          ${this.renderClock()}
+          ${config.compact === true && !config.title && !forecastOnly ? '' : this.renderClock()}
           ${forecastOnly ? '' : html`
             <div class="current ${actionable ? 'actionable' : ''}"
               role=${actionable ? 'button' : nothing}
@@ -2729,6 +2390,7 @@ renderMain({ config, sun, weather, temperature, feels_like, description } = this
       <div class="weather-icon">
         ${this.renderWeatherIcon(currentCondition, currentSunState)}
       </div>
+      ${config.compact === true && !config.title ? this.renderClock() : ''}
       
     </div>
   `;
@@ -2841,12 +2503,17 @@ renderClock({ config } = this) {
   }
 
   // Nothing to render in this container if neither the clock nor the toggle is enabled
-  if (!showTime && !showForecastToggle) {
+  const compactTitle = config.compact === true && config.title;
+  if (!showTime && !showForecastToggle && !compactTitle) {
     return html``;
   }
 
   return html`
-    <div class="current-time">
+    <div class="current-time ${compactTitle ? 'compact-header' : 'compact-controls'}"
+      @pointerdown=${stopPropagation} @pointermove=${stopPropagation}
+      @pointerup=${stopPropagation} @pointercancel=${stopPropagation}
+      @contextmenu=${stopPropagation} @keydown=${stopPropagation} @click=${stopPropagation}>
+      ${compactTitle ? html`<div class="compact-title">${config.title}</div>` : ''}
       ${showTime ? html`
         <div id="digital-clock"></div>
         ${showDay ? html`<div class="date-text day"></div>` : ''}

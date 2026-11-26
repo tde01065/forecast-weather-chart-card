@@ -175,6 +175,11 @@ units:
 | icon_style            | string  | 'style1'                 | Animated icon set: 'style1' (filled) and 'style2' (outline) by Bas Milius, 'style3' by amCharts. |
 | icons_size            | number  | 30                       | The size of the animated or custom icons in pixels.                                                |
 | main_icon_size        | number  | 150                      | Size of main current weather icon in pixels.                                                       |
+| main_icon_opacity     | number  | 1                        | Main icon opacity from 0 to 1; invalid values use 1.                                              |
+| compact               | boolean | false                    | Use a compact, responsive header and main section.                                                |
+| alternative_sensor_fallback | string | weather              | `weather` substitutes weather data when a configured alternative is invalid; `strict` leaves it empty. Invalid values use `weather`. |
+| precision             | object  | none                     | Independent current measurement precision; see [precision](#precision-and-attribute-labels).       |
+| attribute_labels      | object  | none                     | Optional text labels for wind speed and gust; see [precision](#precision-and-attribute-labels).    |
 | current_temp_size     | number  | 35                       | The size of the current temperature in pixels.                                                     |
 | time_size             | number  | 26                       | The size of the current time in pixels.                                                            |
 | day_date_size         | number  | 15                       | The size of the current day and date in pixels.                                                    |
@@ -211,6 +216,7 @@ units:
 | show_wind_forecast             | boolean | true                     | Show or hide wind forecast on the card.                                                            |
 | show_wind_direction            | boolean | true                     | Name the wind direction (where it comes from, e.g. NNW) under each forecast arrow.                 |
 | round_temp                     | boolean | false                    | Round temperatures to whole degrees: the forecast, the current temperature and feels like (11.3 → 11, 11.6 → 12). |
+| precision                      | object  | none                     | Independent forecast wind and temperature precision; see [precision](#precision-and-attribute-labels). |
 | style                          | string  | style2                   | Change chart style, options: 'style1' or 'style2'                                                  |
 | type                           | string  | daily                    | Show daily or hourly forecast if available, options: 'daily' or 'hourly'                           |
 | auto_rotate                    | number  | 0                        | Auto-rotate minutes (0-60), added to `auto_rotate_seconds`. Needs both forecast types.             |
@@ -245,6 +251,62 @@ Wind speed and gust sensors use their own `unit_of_measurement`; forecast wind
 uses the selected forecast entity's `wind_speed_unit`. If a wind unit is
 missing or unsupported, the value is shown without conversion, with its source
 unit if supplied. Invalid, nonfinite or negative wind speeds are hidden.
+
+### Precision and attribute labels
+
+`precision.wind_speed`, `precision.wind_gust_speed`, and
+`forecast.precision.wind_speed` accept integers 0–2 (default 0); Beaufort is
+always an integer. Conversion precedes rounding. `precision.temperature`,
+`forecast.precision.hourly_temperature`, and
+`forecast.precision.daily_temperature` accept integers 0–2. Each overrides
+`forecast.round_temp` for that reading; otherwise the legacy option applies
+(0 decimals when true, 1 when false). Current precision also applies to feels
+like. Invalid precision values use their legacy defaults. Forecast chart
+calculations retain unrounded values.
+
+`alternative_sensor_fallback: strict` applies only to configured alternatives:
+missing, unavailable, empty or invalid readings remain empty instead of using
+weather data. Unconfigured alternatives still use weather data. Missing or
+unsupported source units do not cause fallback; values are shown unconverted
+with their source unit, if available. Beaufort-to-speed conversion is an
+approximation because each Beaufort force represents a range.
+
+`attribute_labels.wind_speed` and `attribute_labels.wind_gust_speed` accept
+optional text strings; absent, empty or non-string values show no label.
+
+Forecast data is cached only while its matching entity/type subscription is
+open. When switching to an uncached forecast, the chart and forecast rows stay
+empty until that subscription delivers data. Auto-rotation keeps both
+subscriptions open when both types are supported. Hiding or disconnecting the
+card closes subscriptions; reconnecting subscribes again.
+
+```yaml
+type: custom:weather-chart-card-ha
+entity: weather.home
+windspeed: sensor.wind_speed
+wind_gust_speed: sensor.wind_gust
+alternative_sensor_fallback: strict
+compact: true
+main_icon_size: 60
+main_icon_opacity: 0.45
+locale: sv
+show_wind_gust_speed: true
+show_forecast_toggle: true
+units:
+  speed: m/s
+precision:
+  wind_speed: 1
+  wind_gust_speed: 1
+  temperature: 1
+attribute_labels:
+  wind_speed: Vind
+  wind_gust_speed: Byvind
+forecast:
+  precision:
+    wind_speed: 0
+    hourly_temperature: 1
+    daily_temperature: 0
+```
 
 
 ## 📸 Example Configurations
@@ -501,6 +563,11 @@ forecast:
 
 The animated icons ship inside `weather-chart-card-ha.js`, so they need no internet connection, no extra files and no CDN. Three sets are included: `icon_style: style1` (filled, default), `style2` (outline) and `style3` (amCharts). To use your own, point `icons` at a folder of SVG files; any icon that fails to load falls back to the bundled one.
 
+The card runtime can render the data already supplied by Home Assistant without
+external browser access. Home Assistant and its weather providers still need
+connectivity to obtain fresh data. The editor's optional city and timezone
+lookups use online services; they are not needed to render the card.
+
 Icons should be in SVG format. Icons should have names as shown [here](https://github.com/mlamberts78/weather-chart-card-ha/blob/master/src/const.js#L24).
 
 Example:
@@ -542,6 +609,13 @@ Example:
 
 ### Local Testing Without Home Assistant
 For developers who want to test changes without installing the card in Home Assistant, we provide a comprehensive test suite with mock data and interactive controls.
+
+For a side-by-side default and compact preview of the **built bundle**, run
+`python -m http.server 5500 --bind 127.0.0.1` from the repository root and
+open `http://127.0.0.1:5500/preview.html`. It uses mock data and minimal Home
+Assistant element stand-ins; it is not connected to Home Assistant. The sensor
+button demonstrates strict fallback. Run `npm run build` first after changing
+source files.
 
 #### Quick Start
 

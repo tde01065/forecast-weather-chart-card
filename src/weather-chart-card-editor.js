@@ -102,6 +102,23 @@ class WeatherChartCardEditor extends LitElement {
     return this._value(path) === true;
   }
 
+  _precisionControl(path, label) {
+    const value = this._value(path);
+    return html`
+      <div class="select-row">
+        <label>${label}</label>
+        <select class="native-select" aria-label=${label}
+          .value=${Number.isInteger(value) && value >= 0 && value <= 2 ? String(value) : ''}
+          @change=${(e) => this._valueChanged({ target: { value: e.target.value === '' ? undefined : Number(e.target.value) } }, path)}>
+          <option value="">Default</option>
+          <option value="0">0 decimals</option>
+          <option value="1">1 decimal</option>
+          <option value="2">2 decimals</option>
+        </select>
+      </div>
+    `;
+  }
+
   updated(changedProperties) {
     if (changedProperties.has('hass')) {
       this.fetchEntities();
@@ -785,6 +802,14 @@ class WeatherChartCardEditor extends LitElement {
           @change="${(e) => this._valueChanged(e, 'main_icon_size')}"
         ></ha-textfield>
       </div>
+      <div class="switch-container">
+        <ha-switch .checked=${this._flag('compact')} @change=${(e) => this._valueChanged(e, 'compact')}></ha-switch>
+        <label class="switch-label">Compact layout</label>
+      </div>
+      <ha-textfield label="Main icon opacity (0 to 1)" type="number" min="0" max="1" step="0.05"
+        .value=${String(this._value('main_icon_opacity'))}
+        @change=${(e) => this._valueChanged({ target: { value: e.target.value === '' ? undefined : Number(e.target.value) } }, 'main_icon_opacity')}>
+      </ha-textfield>
 
       <div class="buttons-container">
         <button class="page-button ${this.currentPage === 'card' ? 'active' : ''}" @click="${() => this.showPage('card')}">Main</button>
@@ -1256,6 +1281,16 @@ class WeatherChartCardEditor extends LitElement {
 
         <!-- Units Page -->
         <div class="page-container ${this.currentPage === 'units' ? 'active' : ''}">
+          ${this._precisionControl('precision.wind_speed', 'Current wind speed precision')}
+          ${this._precisionControl('precision.wind_gust_speed', 'Current wind gust precision')}
+          ${this._precisionControl('forecast.precision.wind_speed', 'Forecast wind speed precision')}
+          ${this._precisionControl('precision.temperature', 'Current temperature precision')}
+          ${this._precisionControl('forecast.precision.hourly_temperature', 'Hourly temperature precision')}
+          ${this._precisionControl('forecast.precision.daily_temperature', 'Daily temperature precision')}
+          <ha-textfield label="Wind speed label (optional)" .value=${this._config.attribute_labels?.wind_speed || ''}
+            @change=${(e) => this._valueChanged(e, 'attribute_labels.wind_speed')}></ha-textfield>
+          <ha-textfield label="Wind gust label (optional)" .value=${this._config.attribute_labels?.wind_gust_speed || ''}
+            @change=${(e) => this._valueChanged(e, 'attribute_labels.wind_gust_speed')}></ha-textfield>
           <div class="textfield-container">
             <div>
               <label>Convert temperature to</label>
@@ -1334,6 +1369,15 @@ class WeatherChartCardEditor extends LitElement {
         <!-- Alternate Page -->
         <div class="page-container ${this.currentPage === 'alternate' ? 'active' : ''}">
           <h5>Alternative sensors for the main card attributes:</h5>
+          <div class="select-row">
+            <label for="alternative-fallback">Unavailable or invalid alternative sensor</label>
+            <select id="alternative-fallback" class="native-select"
+              .value=${this._config.alternative_sensor_fallback === 'strict' ? 'strict' : 'weather'}
+              @change=${(e) => this._valueChanged(e, 'alternative_sensor_fallback')}>
+              <option value="weather">Use weather entity</option>
+              <option value="strict">Do not substitute</option>
+            </select>
+          </div>
           <ha-form
             .data=${this._config}
             .schema=${ALT_SCHEMA}

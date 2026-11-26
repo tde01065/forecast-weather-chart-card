@@ -311,6 +311,9 @@ forecast:
 
 ## 📸 Example Configurations
 
+For a local, isolated Home Assistant frontend with mock weather data and
+preconfigured acceptance cards, see [the test environment](tests/ha/README.md).
+
 ### Card with Current Time, Date and Day
 ```yaml
 type: custom:weather-chart-card-ha

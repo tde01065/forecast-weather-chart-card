@@ -1,0 +1,8 @@
+{
+  "domain": "forecast_card_fixture",
+  "name": "Forecast card local test fixture",
+  "version": "1.0.0",
+  "documentation": "https://github.com/tde01065/forecast-weather-chart-card",
+  "requirements": [],
+  "codeowners": []
+}

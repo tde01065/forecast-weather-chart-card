@@ -5,6 +5,7 @@ import { test } from 'node:test';
 globalThis.window = globalThis;
 const { default: WeatherChartCard } = await import('../src/main.js');
 const { DEFAULTS, FORECAST_DEFAULTS, configValue } = await import('../src/defaults.js');
+const { formatPressure } = await import('../src/measurements.js');
 const actions = await import('../src/actions.js');
 
 // A card with config and hass applied, without rendering it.
@@ -124,7 +125,7 @@ test('alternative temperature and pressure measurements use the selected source 
     config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
   };
   assert.deepEqual(card.formatTemperatureMeasurement(card.temperature, card.temperatureSourceUnit), { value: 20, unit: '°C' });
-  assert.deepEqual(card.formatPressure(card.pressure, card.pressureSourceUnit, card.unitPressure), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(formatPressure(card.pressure, card.pressureSourceUnit, card.unitPressure), { value: 1013, unit: 'hPa' });
   assert.deepEqual(card.formatTemperatureMeasurement(30, undefined), { value: 30, unit: undefined });
   assert.deepEqual(card.formatTemperatureMeasurement(30, 'unknown'), { value: 30, unit: 'unknown' });
 });
@@ -144,6 +145,31 @@ test('changing fallback policy immediately re-evaluates current sensors', () => 
   assert.equal(card.windSpeed, undefined);
   card.setConfig({ entity: 'weather.home', windspeed: 'sensor.wind' });
   assert.equal(card.windSpeed, 5);
+});
+
+test('forecast chart redraws when selected forecast source units change', () => {
+  const card = makeCard({ forecast: { daily_entity: 'weather.forecast' }, units: { precipitation: 'mm' } });
+  const main = { state: 'sunny', attributes: { temperature_unit: '°C', supported_features: 0 } };
+  const forecast = { state: 'sunny', attributes: { temperature_unit: '°C', precipitation_unit: 'mm', supported_features: 1 } };
+  const hass = { states: { 'weather.home': main, 'weather.forecast': forecast },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } } };
+  card.hass = hass;
+  card.forecastChart = {};
+  card._chartUnitsKey = card.chartUnitsKey();
+  let redraws = 0;
+  card.drawChart = () => { redraws++; card._chartUnitsKey = card.chartUnitsKey(); };
+  card.hass = { ...hass };
+  assert.equal(redraws, 0, 'unrelated updates do not rebuild the chart');
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: 'unknown', precipitation_unit: 'in' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 1);
+  assert.deepEqual(card.chartUnits(), { temperature: 'unknown', precipitation: 'mm', sourceTemperature: 'unknown', sourcePrecipitation: 'in' });
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: '°F', precipitation_unit: 'in' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 2);
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: '°C', precipitation_unit: 'mm' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 3, 'source changes redraw even when display units stay the same');
 });
 
 test('#5 #13 the stub and the card share one set of defaults', () => {
@@ -181,15 +207,17 @@ test('#10 precipitation bars use the display unit, with a matching axis ceiling'
 });
 
 test('#11 pressure converts between every Home Assistant unit', () => {
-  const card = makeCard();
-  assert.deepEqual(card.formatPressure(1013.25, 'hPa', 'inHg'), { value: '29.92', unit: 'inHg' });
-  assert.deepEqual(card.formatPressure(1013.25, 'mbar', 'hPa'), { value: 1013, unit: 'hPa' });
-  assert.deepEqual(card.formatPressure(101.325, 'kPa', 'hPa'), { value: 1013, unit: 'hPa' });
-  assert.deepEqual(card.formatPressure(14.696, 'psi', 'mmHg'), { value: 760, unit: 'mmHg' });
-  assert.deepEqual(card.formatPressure(1013.25, 'hPa', 'kPa'), { value: '101.3', unit: 'kPa' });
+  assert.deepEqual(formatPressure(1013.25, 'hPa', 'inHg'), { value: '29.92', unit: 'inHg' });
+  assert.deepEqual(formatPressure(1013.25, 'mbar', 'hPa'), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(formatPressure(101.325, 'kPa', 'hPa'), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(formatPressure(14.696, 'psi', 'mmHg'), { value: 760, unit: 'mmHg' });
+  assert.deepEqual(formatPressure(1013.25, 'hPa', 'kPa'), { value: '101.3', unit: 'kPa' });
   // An unknown unit is shown as reported, labelled with its own unit.
-  assert.deepEqual(card.formatPressure(1013.25, 'weird', 'hPa'), { value: 1013, unit: 'weird' });
-  assert.deepEqual(card.formatPressure(undefined, 'hPa', 'hPa'), { value: undefined, unit: 'hPa' });
+  assert.deepEqual(formatPressure(1013.25, 'weird', 'hPa'), { value: 1013, unit: 'weird' });
+  assert.deepEqual(formatPressure(0, undefined, 'hPa'), { value: 0, unit: undefined });
+  assert.deepEqual(formatPressure(100, 'constructor', 'hPa'), { value: 100, unit: 'constructor' });
+  assert.deepEqual(formatPressure(100, 'hPa', '__proto__'), { value: 100, unit: 'hPa' });
+  assert.deepEqual(formatPressure(undefined, 'hPa', 'hPa'), { value: undefined, unit: 'hPa' });
 });
 
 test('#16 unknown and unavailable conditions fall back to Home Assistant translations', () => {
@@ -963,4 +991,74 @@ test('the editor asks the shown forecast whether it carries precipitation probab
   other._probeProbability();
   await flush();
   assert.equal(other._hasProbability, undefined);
+});
+
+test('editor forecast probes ignore replaced connections and close delayed subscriptions', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let resolveOld;
+  let oldCallback;
+  let newCallback;
+  let closed = 0;
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    oldCallback = callback;
+    return new Promise(resolve => { resolveOld = resolve; });
+  } } };
+  editor._probeProbability();
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    newCallback = callback;
+    return Promise.resolve(() => { closed++; });
+  } } };
+  editor._probeProbability();
+  oldCallback({ forecast: [{ precipitation_probability: 0 }] });
+  assert.equal(editor._hasProbability, undefined);
+  newCallback({ forecast: [{}] });
+  assert.equal(editor._hasProbability, false);
+  oldCallback({ forecast: [{ precipitation_probability: 50 }] });
+  assert.equal(editor._hasProbability, false);
+  resolveOld(() => { closed++; });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(closed, 2);
+});
+
+test('editor closes a forecast probe even when the first event is synchronous', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let closed = 0;
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    callback({ forecast: [{ precipitation_probability: 0 }] });
+    return () => { closed++; };
+  } } };
+  editor._probeProbability();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(editor._hasProbability, true);
+  assert.equal(closed, 1);
+});
+
+test('editor does not restart forecast probes while detached', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let count = 0;
+  let closed = 0;
+  const callbacks = [];
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    count++;
+    callbacks.push(callback);
+    return Promise.resolve(() => { closed++; });
+  } } };
+  editor._probeProbability();
+  editor.disconnectedCallback();
+  editor._probeProbability();
+  callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+  assert.equal(editor._hasProbability, undefined);
+  assert.equal(count, 1);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(closed, 1);
+  editor._probabilityDetached = false;
+  editor._probeProbability();
+  assert.equal(count, 2);
+  editor.disconnectedCallback();
 });

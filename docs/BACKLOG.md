@@ -9,7 +9,7 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
 | FWC-03 | P0 | Complete | Default weather fallback and opt-in strict policy, with editor and invalid-sensor tests. Missing/unsupported units do not trigger fallback. |
 | FWC-04 | P1 | Complete | Independent current speed, gust and forecast wind precision; conversion precedes rounding and Beaufort remains integer. |
 | FWC-05 | P1 | Complete | Subscription identity, loading, rotation, stale callbacks, connection replacement and delayed unsubscribe covered by automated tests. |
-| FWC-06 | P1 | Complete | Optional responsive compact layout and icon opacity; browser coverage includes 320–1200 px, Swedish, RTL, title, clock and toggle variations. |
+| FWC-06 | P1 | Implemented; visual acceptance pending | Optional responsive compact layout and icon opacity; browser coverage includes 320–1200 px, Swedish, RTL, title, clock and toggle variations. Final visual acceptance requires the real HA frontend. |
 | FWC-07 | P2 | Complete | Independent current/hourly/daily temperature precision overrides legacy round_temp per reading; chart calculations retain precision. |
 | FWC-08 | P2 | Complete | Chart, subscription, timers, redraw frame and resize cleanup tested across hide, detach and reconnect. |
 | FWC-09 | P2 | Complete | Browser integration exercises bundled runtime with external requests blocked; online editor lookups and fresh provider data still require connectivity. |
@@ -42,6 +42,48 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
 - Local CodeScene delta analysis reports increased complexity in the already
   large main card and editor, plus misleading findings on the generated,
   minified bundle. These remain maintenance risks; no findings were suppressed.
+
+### Consolidated review, 2026-11-26
+
+- Measurement parsing and conversion and the editor stylesheet were separated
+  into cohesive modules. Local CodeScene 1.0.58 against master reports
+  `main.js` 1.84 -> 1.68 (previously 1.58) and the editor 4.53 -> 4.74
+  (previously 4.47). The main file still regresses: its rendering, forecast
+  lifecycle and configuration methods remain large and complex. Avoiding a
+  broad, behavior-risking rewrite leaves those findings open. The editor probe
+  also remains complex after lifecycle hardening. The new measurement module
+  scores 8.67 and has pressure/conditional complexity findings; the generated
+  bundle and test code have additional delta findings.
+- A forecast entity changing units could leave old chart labels and conversion
+  assumptions in a reused chart. The chart now rebuilds when source or display
+  units change, including when both source units map to the same display unit.
+  Unsupported pressure units matching inherited object names now remain
+  unconverted. Regression tests include unchanged-unit negative controls.
+- Editor probability probes now identify the connection and individual
+  subscription, reject stale events, and release delayed or synchronous
+  subscriptions. Unsupported forecast requests and cleanup failures are logged.
+- Coverage review: FWC-01/02/03 cover independent wind sources, invalid and
+  zero readings, unit provenance and both fallback policies; FWC-04/07 cover
+  independent precision, conversion before rounding and legacy options;
+  FWC-05/08 cover subscription identity, stale callbacks, delayed cleanup,
+  timers, chart destruction and reconnect; FWC-06/10/12 cover responsive
+  layouts, Swedish labels and separate gust/speed labels; FWC-09 covers
+  bundled icons with external requests blocked; FWC-11 covers both path
+  formats and cross-platform builds. The mocked browser fixture is not a
+  substitute for manual visual acceptance in Home Assistant.
+- `tests/ha` provides an isolated local HA instance. Its weather entity uses
+  real forecast subscriptions and the controls simulate sensor recovery.
+  The YAML acceptance view and a user-created UI-managed editor playground share
+  the isolated instance, not a production custom-element registration. An
+  automated HA browser run loaded all three cards, switched forecast type, and
+  checked fallback, strict policy, recovery, icon settings and editor controls.
+  One frontend `unknown_command` unhandled rejection occurred before the
+  editor was added; its source is not yet identified. A subsequent run,
+  including independent speed and gust failure/recovery, saw no page errors.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0: build, 61 unit
+  tests and 31 browser tests passed on each. Linux used `npm ci`; Windows used
+  the existing installed dependencies. Bundles were byte-identical with SHA-256
+  `ae78a70275bbb317e3c56e1f1b2a68322c4a7e875b6fcd75fae44937f2b4b643`.
 
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.

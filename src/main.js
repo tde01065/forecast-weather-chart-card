@@ -7,6 +7,7 @@ import {
   WeatherEntityFeature
 } from './const.js';
 import { DEFAULTS, FORECAST_DEFAULTS, UNITS_DEFAULTS } from './defaults.js';
+import { measurementNumber, numericBearing, convertTemperature, formatPressure, convertVisibility } from './measurements.js';
 import iconData from './icon-data.js';
 import { GestureDetector, hasAction } from './actions.js';
 import {LitElement, html, nothing} from 'lit';
@@ -179,6 +180,10 @@ set hass(hass) {
       this.startAutoRotate();
     }
   }
+  if (this.forecastChart && this._chartUnitsKey !== undefined
+      && this._chartUnitsKey !== this.chartUnitsKey()) {
+    this.drawChart();
+  }
 }
 
 /**
@@ -199,13 +204,13 @@ hasSensorState(hass, entityId) {
 sensorSuppliesValue(hass, entityId, bearing = false) {
   if (!this.hasSensorState(hass, entityId)) return false;
   const value = hass.states[entityId].state;
-  return bearing ? this.getWindDir(value) !== null : this.measurementNumber(value) !== null;
+  return bearing ? this.getWindDir(value) !== null : measurementNumber(value) !== null;
 }
 
 readSensorState(hass, entityId, fallback, bearing = false) {
   if (this.sensorSuppliesValue(hass, entityId, bearing)) return hass.states[entityId].state;
   if (entityId && this.config.alternative_sensor_fallback === 'strict') return undefined;
-  return (bearing ? this.getWindDir(fallback) !== null : this.measurementNumber(fallback) !== null)
+  return (bearing ? this.getWindDir(fallback) !== null : measurementNumber(fallback) !== null)
     ? fallback : undefined;
 }
 
@@ -223,17 +228,8 @@ precision(value, fallback) {
   return Number.isInteger(value) && value >= 0 && value <= 2 ? value : fallback;
 }
 
-measurementNumber(value) {
-  if (typeof value !== 'number' && (typeof value !== 'string'
-      || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) {
-    return null;
-  }
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
 formatWindMeasurement(value, sourceUnit, targetUnit = this.unitSpeed, precision = 0) {
-  const numeric = this.measurementNumber(value);
+  const numeric = measurementNumber(value);
   if (numeric === null || numeric < 0) return { value: undefined, unit: sourceUnit };
   if ((sourceUnit === 'Bft' || sourceUnit === 'Beaufort') && (!Number.isInteger(numeric) || numeric > 12)) {
     return { value: undefined, unit: sourceUnit };
@@ -1146,7 +1142,7 @@ getLocalizedMonthNameShort(date, timezone) {
   }
 
 getWindDirIcon(deg) {
-  const bearing = this.numericBearing(deg);
+  const bearing = numericBearing(deg);
   if (bearing !== null) {
     return cardinalDirectionsIcon[Math.floor((bearing + 22.5) / 45.0) % 8];
   } else {
@@ -1202,18 +1198,11 @@ getWindDirLabel(deg) {
 }
 
 getWindDir(deg) {
-  const bearing = this.numericBearing(deg);
+  const bearing = numericBearing(deg);
   if (bearing !== null) return this.ll('cardinalDirections')[Math.floor((bearing + 11.25) / 22.5) % 16];
   const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
   const index = typeof deg === 'string' ? directions.indexOf(deg) : -1;
   return index < 0 ? null : this.ll('cardinalDirections')[index];
-}
-
-numericBearing(value) {
-  if (typeof value !== 'number' && (typeof value !== 'string'
-      || !/^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim()))) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? ((number % 360) + 360) % 360 : null;
 }
 
 calculateBeaufortScale(windSpeed, sourceUnit = this.weather && this.weather.attributes && this.weather.attributes.wind_speed_unit) {
@@ -1331,56 +1320,13 @@ convertWindSpeed(windSpeed, targetUnit = this.unitSpeed, sourceUnit = this.weath
   return numericWindSpeed * toMetersPerSecond * fromMetersPerSecond;
 }
 
-/**
- * Convert a pressure between any of the units Home Assistant reports, through
- * pascals, and round it for display. An unknown unit is shown unconverted,
- * labelled with its own unit.
- * @returns {{ value: (number|string|undefined), unit: string }}
- */
-formatPressure(value, fromUnit, toUnit = fromUnit) {
-  const numericValue = Number(value);
-  if (value === undefined || value === null || value === '' || !Number.isFinite(numericValue)) {
-    return { value, unit: toUnit || fromUnit };
-  }
-  const toPascals = {
-    'Pa': 1,
-    'hPa': 100,
-    'mbar': 100,
-    'cbar': 1000,
-    'kPa': 1000,
-    'bar': 100000,
-    'mmHg': 133.322387415,
-    'inHg': 3386.389,
-    'psi': 6894.757,
-  };
-  const decimals = { 'kPa': 1, 'cbar': 1, 'bar': 3, 'inHg': 2, 'psi': 2 };
-  const fromFactor = toPascals[fromUnit];
-  const toFactor = toPascals[toUnit];
-  const unit = fromFactor && toFactor ? toUnit : fromUnit;
-  const converted = fromFactor && toFactor ? numericValue * fromFactor / toFactor : numericValue;
-  const places = decimals[unit] || 0;
-  return { value: places ? converted.toFixed(places) : Math.round(converted), unit };
-}
-
-convertTemperature(temp, fromUnit, toUnit) {
-  if (!toUnit || fromUnit === toUnit) return temp;
-  
-  if (toUnit === '°C' && fromUnit === '°F') {
-    return (temp - 32) * 5/9;
-  } else if (toUnit === '°F' && fromUnit === '°C') {
-    return (temp * 9/5) + 32;
-  }
-  
-  return temp;
-}
-
 formatTemperatureMeasurement(value, sourceUnit, places = 'current') {
-  const numeric = this.measurementNumber(value);
+  const numeric = measurementNumber(value);
   if (numeric === null) return { value: undefined, unit: sourceUnit };
   const supported = ['°C', '°F'];
   const unit = supported.includes(sourceUnit) && supported.includes(this.unitTemperature)
     ? this.unitTemperature : sourceUnit;
-  const converted = this.convertTemperature(numeric, sourceUnit, unit);
+  const converted = convertTemperature(numeric, sourceUnit, unit);
   return { value: places === 'dew_point' ? Math.round(converted) : this.roundTemperature(converted), unit };
 }
 
@@ -1432,6 +1378,24 @@ getSourcePrecipitationUnit() {
   return lengthUnit === 'km' ? 'mm' : 'in';
 }
 
+chartUnits() {
+  const type = this.currentForecastType();
+  const source = this.getForecastEntityState(type)?.attributes?.temperature_unit;
+  const sourcePrecipitation = this.getSourcePrecipitationUnit();
+  const supported = ['°C', '°F'];
+  return {
+    temperature: supported.includes(source) && supported.includes(this.unitTemperature)
+      ? this.unitTemperature : source || '',
+    precipitation: this.getDisplayPrecipitationUnit(sourcePrecipitation),
+    sourceTemperature: source,
+    sourcePrecipitation,
+  };
+}
+
+chartUnitsKey() {
+  return JSON.stringify(this.chartUnits());
+}
+
 getDisplayPrecipitationUnit(sourceUnit = this.getSourcePrecipitationUnit()) {
   const configuredUnit = this.config && this.config.units ? this.config.units.precipitation : null;
   const normalizedConfiguredUnit = this.normalizePrecipitationUnit(configuredUnit);
@@ -1469,26 +1433,6 @@ convertPrecipitation(value, fromUnit, toUnit) {
   }
 
   return numericValue * fromFactor / toFactor;
-}
-
-convertVisibility(value, fromUnit, toUnit) {
-  const numericValue = Number(value);
-  if (!Number.isFinite(numericValue)) {
-    return value;
-  }
-  if (!fromUnit || !toUnit || fromUnit === toUnit) {
-    return numericValue;
-  }
-  // Normalize to meters first
-  const toMeters = { 'm': 1, 'km': 1000, 'mi': 1609.344, 'yd': 0.9144, 'ft': 0.3048 };
-  const fromFactor = toMeters[fromUnit];
-  const toFactor = toMeters[toUnit];
-  if (!fromFactor || !toFactor) {
-    return numericValue;
-  }
-  const result = numericValue * fromFactor / toFactor;
-  // Round to 1 decimal place; drop the decimal if the result is a whole number
-  return Math.round(result * 10) / 10;
 }
 
 async firstUpdated(changedProperties) {
@@ -1773,11 +1717,10 @@ drawChart({ config, language, weather, forecastItems } = this) {
   }
   const existingChart = Chart.getChart(chartCanvas);
   if (existingChart) existingChart.destroy();
-  const forecastSourceTempUnit = this.getForecastEntityState(config.forecast.type || 'daily')?.attributes?.temperature_unit;
-  const temperatureUnits = ['°C', '°F'];
-  var tempUnit = temperatureUnits.includes(forecastSourceTempUnit) && temperatureUnits.includes(this.unitTemperature)
-    ? this.unitTemperature : forecastSourceTempUnit || '';
-  const displayPrecipUnit = this.getDisplayPrecipitationUnit();
+  const chartUnits = this.chartUnits();
+  this._chartUnitsKey = JSON.stringify(chartUnits);
+  const tempUnit = chartUnits.temperature;
+  const displayPrecipUnit = chartUnits.precipitation;
   const precipUnit = config.forecast.precipitation_type === 'probability'
     ? '%'
     : this.ll('units')[displayPrecipUnit] || displayPrecipUnit;
@@ -2284,21 +2227,21 @@ computeForecastData({ config, forecastItems } = this) {
     var d = forecast[i];
     dateTime.push(d.datetime);
     
-    let highTemp = this.measurementNumber(d.temperature);
-    let lowTemp = this.measurementNumber(d.templow);
+    let highTemp = measurementNumber(d.temperature);
+    let lowTemp = measurementNumber(d.templow);
     
     // Convert temperatures if needed
     if (this.unitTemperature && this.unitTemperature !== forecastSourceTempUnit) {
-      if (highTemp != null) highTemp = this.convertTemperature(highTemp, forecastSourceTempUnit, this.unitTemperature);
+      if (highTemp != null) highTemp = convertTemperature(highTemp, forecastSourceTempUnit, this.unitTemperature);
       if (lowTemp != null) {
-        lowTemp = this.convertTemperature(lowTemp, forecastSourceTempUnit, this.unitTemperature);
+        lowTemp = convertTemperature(lowTemp, forecastSourceTempUnit, this.unitTemperature);
       }
     }
     
     tempHigh.push(Number.isFinite(highTemp) ? highTemp : null);
     // A gap keeps later lows under their own day when one item has no low.
     tempLow.push(Number.isFinite(lowTemp) ? lowTemp : null);
-    const probabilityValue = this.measurementNumber(d.precipitation_probability);
+    const probabilityValue = measurementNumber(d.precipitation_probability);
     probability.push(probabilityValue !== null && probabilityValue >= 0 && probabilityValue <= 100 ? probabilityValue : null);
 
     if (config.forecast.precipitation_type === 'probability') {
@@ -2306,7 +2249,7 @@ computeForecastData({ config, forecastItems } = this) {
     } else {
       // Bars are drawn in the display unit, the same unit as the labels and
       // the axis ceiling.
-      const sourcePrecipitation = this.measurementNumber(d.precipitation);
+      const sourcePrecipitation = measurementNumber(d.precipitation);
       const numericPrecipitation = sourcePrecipitation === null ? null : this.convertPrecipitation(sourcePrecipitation, sourcePrecipUnit, displayPrecipUnit);
       if (numericPrecipitation !== null && numericPrecipitation >= 0 && Number.isFinite(numericPrecipitation)) {
         precip.push(Math.round(numericPrecipitation * 100) / 100);
@@ -2936,7 +2879,7 @@ renderAttributes({ config, humidity, pressure, windSpeed, windDirection, sun, la
   const gust = this.formatWindMeasurement(wind_gust_speed, this.windGustSourceUnit, this.unitSpeed, config.precision?.wind_gust_speed);
   const dWindGustSpeed = gust.value;
 
-  const { value: dPressure, unit: pressureUnit } = this.formatPressure(pressure, this.pressureSourceUnit, this.unitPressure);
+  const { value: dPressure, unit: pressureUnit } = formatPressure(pressure, this.pressureSourceUnit, this.unitPressure);
 
   const showHumidity = config.show_humidity !== false;
   const showPressure = config.show_pressure !== false;
@@ -2955,7 +2898,7 @@ renderAttributes({ config, humidity, pressure, windSpeed, windDirection, sun, la
     ? this.unitVisibility : this.visibilitySourceUnit;
   let dVisibility = visibility;
   if (showVisibility && visibility !== undefined) {
-    dVisibility = this.convertVisibility(visibility, this.visibilitySourceUnit, visibilityDisplayUnit);
+    dVisibility = convertVisibility(visibility, this.visibilitySourceUnit, visibilityDisplayUnit);
   }
 
 return html`

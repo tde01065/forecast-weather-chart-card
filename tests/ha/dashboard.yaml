@@ -1,0 +1,62 @@
+title: Forecast card acceptance
+views:
+  - title: Acceptance
+    path: acceptance
+    cards:
+      - type: entities
+        title: Simulate sensor failure and recovery
+        entities:
+          - input_boolean.fixture_speed_available
+          - input_boolean.fixture_gust_available
+      - type: custom:weather-chart-card-ha
+        entity: weather.fixture_weather
+        title: Default layout
+        show_forecast_toggle: true
+      - type: custom:weather-chart-card-ha
+        entity: weather.fixture_weather
+        title: Compact - fallback
+        compact: true
+        locale: sv
+        main_icon_size: 60
+        main_icon_opacity: 0.45
+        show_forecast_toggle: true
+        show_wind_gust_speed: true
+        temp: sensor.fixture_temperature
+        humid: sensor.fixture_humidity
+        press: sensor.fixture_pressure
+        windspeed: sensor.fixture_wind_speed
+        wind_gust_speed: sensor.fixture_wind_gust
+        winddir: sensor.fixture_wind_bearing
+        units:
+          temperature: "°C"
+          pressure: hPa
+          speed: m/s
+        precision:
+          temperature: 2
+          wind_speed: 1
+          wind_gust_speed: 2
+        attribute_labels:
+          wind_speed: Vind
+          wind_gust_speed: Byvind
+        forecast:
+          precision:
+            wind_speed: 0
+            hourly_temperature: 1
+            daily_temperature: 0
+      - type: custom:weather-chart-card-ha
+        entity: weather.fixture_weather
+        title: Compact - strict alternatives
+        compact: true
+        alternative_sensor_fallback: strict
+        windspeed: sensor.fixture_wind_speed
+        wind_gust_speed: sensor.fixture_wind_gust
+        show_wind_gust_speed: true
+        show_forecast_toggle: true
+        units:
+          speed: m/s
+        precision:
+          wind_speed: 1
+          wind_gust_speed: 2
+        attribute_labels:
+          wind_speed: Speed
+          wind_gust_speed: Gust

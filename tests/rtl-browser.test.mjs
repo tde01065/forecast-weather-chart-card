@@ -303,6 +303,60 @@ test('disconnect cancels delayed observation, timers and chart across repeated r
   } finally { await page.close(); }
 });
 
+test('chart labels and values follow changed forecast source units', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }));
+    await page.goto('http://forecast-units.test/');
+    await page.addScriptTag({ content: bundle });
+    await page.evaluate(() => {
+      const card = document.createElement('weather-chart-card-ha');
+      card.setConfig({ entity: 'weather.home', show_main: false,
+        forecast: { daily_entity: 'weather.forecast', disable_animation: true } });
+      const states = {
+        'weather.home': { state: 'sunny', attributes: { temperature_unit: '°C', supported_features: 0 } },
+        'weather.forecast': { state: 'sunny', attributes: { temperature_unit: '°F', precipitation_unit: 'mm', supported_features: 1 } },
+      };
+      const hass = { language: 'en', states, config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } },
+        connection: { subscribeMessage(callback) {
+          setTimeout(() => callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 32, precipitation: 1 }] }), 0);
+          return Promise.resolve(() => {});
+        } } };
+      card.hass = hass;
+      document.body.append(card);
+      window.fixture = { card, hass };
+    });
+    await page.waitForFunction(() => window.fixture.card.forecastChart);
+    const result = await page.evaluate(() => {
+      const { card, hass } = window.fixture;
+      const read = () => {
+        const chart = card.forecastChart;
+        const label = chart.options.plugins.tooltip.callbacks.label;
+        const temp = chart.data.datasets[0];
+        const rain = chart.data.datasets[2];
+        return {
+          temperature: temp.data[0],
+          tempLabel: label({ dataset: temp, datasetIndex: 0, dataIndex: 0, raw: temp.data[0] }),
+          rainLabel: label({ dataset: rain, datasetIndex: 2, dataIndex: 0, formattedValue: '1' }),
+        };
+      };
+      const before = read();
+      const oldChart = card.forecastChart;
+      hass.states['weather.forecast'] = { state: 'sunny',
+        attributes: { temperature_unit: 'unknown', precipitation_unit: 'in', supported_features: 1 } };
+      card.hass = { ...hass };
+      return { before, after: read(), rebuilt: oldChart !== card.forecastChart };
+    });
+    assert.equal(result.before.temperature, 0);
+    assert.match(result.before.tempLabel, /°C/);
+    assert.match(result.before.rainLabel, /mm/);
+    assert.equal(result.rebuilt, true);
+    assert.equal(result.after.temperature, 32);
+    assert.match(result.after.tempLabel, /unknown/);
+    assert.match(result.after.rainLabel, /in/);
+  } finally { await page.close(); }
+});
+
 for (const {name, forecast, expected} of [
   {name:'defaults', forecast:{}, expected:[[], [5, 5]]},
   {name:'solid', forecast:{temperature1_line_style:'solid', temperature2_line_style:'solid'}, expected:[[], []]},
@@ -774,5 +828,38 @@ test('editor exposes strict fallback and independent precision controls', async 
       return { strict, precision: speedPrecision, label: config.attribute_labels.wind_gust_speed, count: root.querySelectorAll('select[aria-label$="precision"]').length };
     });
     assert.deepEqual(result, { strict: 'strict', precision: 1, label: 'Byvind', count: 6 });
+  } finally { await page.close(); }
+});
+
+test('editor reconnect resubscribes and rejects the detached probe', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.goto('http://editor-reconnect.test/');
+    await page.addScriptTag({ content: bundle });
+    const result = await page.evaluate(async () => {
+      const callbacks = [];
+      let closed = 0;
+      const editor = document.createElement('weather-chart-card-ha-editor');
+      editor.hass = { states: { 'weather.home': { state: 'sunny', attributes: {} } },
+        connection: { subscribeMessage(callback) {
+          callbacks.push(callback);
+          return Promise.resolve(() => { closed++; });
+        } } };
+      editor.setConfig({ entity: 'weather.home' });
+      document.body.append(editor);
+      await editor.updateComplete;
+      editor.remove();
+      editor._probeProbability();
+      callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+      const detached = { count: callbacks.length, value: editor._hasProbability };
+      document.body.append(editor);
+      await editor.updateComplete;
+      callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+      callbacks[1]({ forecast: [{}] });
+      await Promise.resolve();
+      return { detached, count: callbacks.length, value: editor._hasProbability, closed };
+    });
+    assert.deepEqual(result, { detached: { count: 1, value: undefined }, count: 2, value: false, closed: 2 });
   } finally { await page.close(); }
 });

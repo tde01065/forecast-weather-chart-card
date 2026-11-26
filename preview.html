@@ -38,11 +38,14 @@
         this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host{display:inline-block;width:1em;text-align:center}</style>◦';
       }
     });
-    const forecasts = (type) => Array.from({ length: 10 }, (_, i) => ({
-      datetime: new Date(Date.now() + i * (type === 'hourly' ? 3600000 : 86400000)).toISOString(),
-      temperature: 16.25 + i / 2, templow: 9.5 + i / 2, condition: 'partlycloudy',
-      precipitation: i / 10, wind_speed: 18 + i, wind_bearing: 45,
-    }));
+    const forecasts = (type) => {
+      const start = Date.now();
+      return Array.from({ length: 10 }, (_, i) => ({
+        datetime: new Date(start + i * (type === 'hourly' ? 3600000 : 86400000)).toISOString(),
+        temperature: 16.25 + i / 2, templow: 9.5 + i / 2, condition: 'partlycloudy',
+        precipitation: i / 10, wind_speed: 18 + i, wind_bearing: 45,
+      }));
+    };
     const hass = {
       language: 'en', config: { time_zone: 'Europe/Stockholm', unit_system: { temperature: '°C', length: 'km' } },
       states: {

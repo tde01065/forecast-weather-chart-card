@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- An isolated Docker Compose Home Assistant test instance with deterministic weather, sensor-failure controls and acceptance dashboards.
 - Optional compact layout and main icon opacity, independent wind and temperature precision, and optional wind and gust text labels, with editor controls.
 - `alternative_sensor_fallback: strict` prevents invalid or unavailable configured sensors from being substituted with weather entity data.
 - A bundled, mock-data `preview.html` compares the default and compact layouts without Home Assistant.
@@ -12,6 +13,10 @@
 - `show_version`: hide the card version in the bottom corner (default `true`, shown as before).
 
 ### Fixed
+- Forecast charts rebuild when their source or display units change, keeping converted values and tooltip labels consistent.
+- Editor forecast probes reject stale callbacks after connection replacement and clean up even when the first event arrives synchronously.
+- Unsupported pressure units that happen to match JavaScript object property names remain unconverted.
+- The standalone preview uses one timestamp per forecast, avoiding inconsistent interval lengths in its smoke test.
 - The local preview now has a dedicated localhost server that serves the correct bundle with a JavaScript content type and reports occupied ports. Browser smoke tests exercise real HTTP responses rather than intercepted fixtures.
 - Invalid or missing measurements no longer become zero; alternative temperature, pressure and visibility readings retain their own source units. Forecast chart calculations retain temperature precision.
 - Forecast subscriptions reject callbacks from replaced connections and handle delayed cleanup; detached cards no longer restart their clock or chart work.

@@ -8,7 +8,8 @@ export default function cardVersion() {
   return {
     name: 'card-version',
     transform(code, id) {
-      if (!id.includes('/src/') || !code.includes('__CARD_VERSION__')) return null;
+      if (!id.replaceAll('\\', '/').includes('/src/') ||
+          !code.includes('__CARD_VERSION__')) return null;
       return { code: code.replaceAll('__CARD_VERSION__', JSON.stringify(version)), map: null };
     },
   };

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { chromium } from 'playwright';
+import { startPreview } from '../scripts/preview.mjs';
 
 const localeSource = readFileSync(new URL('../src/locale.js', import.meta.url), 'utf8');
 const { default: locale } = await import('data:text/javascript;base64,' + Buffer.from(localeSource).toString('base64'));
@@ -11,6 +13,482 @@ before(async () => {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined) });
 });
 after(async () => { await browser?.close(); });
+
+for (const { name, width } of [{ name: 'desktop', width: 1280 }, { name: 'narrow', width: 390 }]) {
+  test(`HTTP preview renders and responds to controls: ${name}`, async () => {
+    const server = await startPreview(0);
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(`page: ${error.message}`));
+    page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
+    page.on('requestfailed', request => errors.push(`request: ${request.url()} ${request.failure()?.errorText}`));
+    page.on('response', response => {
+      if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`);
+    });
+    try {
+      await page.goto(`http://127.0.0.1:${server.address().port}/preview.html`);
+      await page.waitForFunction(() => [...document.querySelectorAll('weather-chart-card-ha')].length === 2
+        && [...document.querySelectorAll('weather-chart-card-ha')].every(card =>
+          card.forecastChart && card.forecasts.length > 1 && card.shadowRoot?.querySelector('.current-temp')));
+      for (const id of ['default', 'compact']) {
+        const card = page.locator(`#${id}`);
+        for (const selector of ['.current-temp', '.current-condition', '.weather-icon img', '.attributes', '.wind-speed-attribute', '#forecastChart']) {
+          assert.equal(await card.locator(selector).isVisible(), true, `${id} ${selector} must be visible`);
+        }
+        assert.match((await card.locator('.current-temp').textContent()).trim(), /16\.4/);
+        assert.ok((await card.locator('.current-condition').textContent()).trim());
+        assert.ok(await card.locator('.weather-icon img').evaluate(image => image.complete && image.naturalWidth > 0));
+        assert.ok(await card.evaluate(element => element.forecastChart.data.datasets[0].data.length > 0));
+      }
+      assert.equal(await page.locator('#compact .wind-speed-attribute').textContent(), '5.1 m/s');
+      if (process.env.PREVIEW_SCREENSHOT_DIR) {
+        await page.screenshot({ path: join(process.env.PREVIEW_SCREENSHOT_DIR, `preview-${name}.png`), fullPage: true });
+      }
+      for (const id of ['default', 'compact']) {
+        await page.locator(`#${id} .forecast-toggle`).click();
+        await page.waitForFunction(cardId => {
+          const card = document.getElementById(cardId);
+          return card.config.forecast.type === 'hourly' && card.forecastChart && card.forecasts.length > 1
+            && Date.parse(card.forecasts[1].datetime) - Date.parse(card.forecasts[0].datetime) === 3600000;
+        }, id);
+        await page.locator(`#${id} .forecast-toggle`).click();
+        await page.waitForFunction(cardId => {
+          const card = document.getElementById(cardId);
+          return card.config.forecast.type === 'daily' && card.forecastChart && card.forecasts.length > 1
+            && Date.parse(card.forecasts[1].datetime) - Date.parse(card.forecasts[0].datetime) === 86400000;
+        }, id);
+      }
+      await page.locator('#sensor').click();
+      await page.waitForFunction(() => !document.querySelector('#compact').shadowRoot.querySelector('.wind-speed-attribute'));
+      assert.equal(await page.locator('#compact .wind-gust-speed').textContent(), '7.5 m/s');
+      assert.equal(await page.locator('#default .wind-speed-attribute').isVisible(), true);
+      await page.locator('#sensor').click();
+      await page.waitForFunction(() => document.querySelector('#compact').shadowRoot.querySelector('.wind-speed-attribute')?.textContent === '5.1 m/s');
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+      await new Promise((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
+    }
+  });
+}
+
+for (const { width, language, title, clock, toggle } of [
+  { width: 320, language: 'sv', title: '', clock: false, toggle: true },
+  { width: 390, language: 'sv', title: 'En längre väderprognos för platsen', clock: true, toggle: false },
+  { width: 320, language: 'he-IL', title: 'Weather', clock: true, toggle: true },
+  { width: 1200, language: 'sv', title: 'Weather', clock: false, toggle: true },
+]) {
+  test(`offline compact integration: ${language}, ${width}, clock ${clock}, toggle ${toggle}`, async () => {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    const errors = [];
+    const blocked = [];
+    page.on('pageerror', error => errors.push(error.message));
+    try {
+      await page.route('**/*', route => {
+        if (route.request().url() === 'http://compact.test/') {
+          return route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><style>body{margin:0}ha-card,weather-chart-card-ha{display:block}</style></html>' });
+        }
+        blocked.push(route.request().url());
+        return route.abort();
+      });
+      await page.goto('http://compact.test/');
+      await page.addScriptTag({ content: bundle });
+      await page.evaluate(({ language, title, clock, toggle }) => {
+        document.documentElement.dir = language.startsWith('he') ? 'rtl' : 'ltr';
+        const card = document.createElement('weather-chart-card-ha');
+        const callbacks = {};
+        card.setConfig({
+          entity: 'weather.home', title, locale: language, compact: true, main_icon_size: 60,
+          main_icon_opacity: 0.45, show_time: clock, show_day: clock, show_date: clock,
+          show_forecast_toggle: toggle, show_wind_direction: false, show_wind_gust_speed: true,
+          windspeed: 'sensor.speed', wind_gust_speed: 'sensor.gust',
+          alternative_sensor_fallback: 'strict', units: { speed: 'm/s' },
+          precision: { wind_speed: 1, wind_gust_speed: 1, temperature: 2 },
+          attribute_labels: { wind_speed: 'Vind', wind_gust_speed: 'Byvind' },
+          forecast: { disable_animation: true, precision: { wind_speed: 0, daily_temperature: 0, hourly_temperature: 1 } },
+        });
+        const hass = {
+          language, config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } },
+          states: {
+            'weather.home': { state: 'sunny', attributes: { temperature: 12.345, temperature_unit: '°C', wind_speed: 99, wind_speed_unit: 'km/h', supported_features: 3 } },
+            'sensor.speed': { state: '18.36', attributes: { unit_of_measurement: 'km/h' } },
+            'sensor.gust': { state: '7.5', attributes: { unit_of_measurement: 'm/s' } },
+          },
+          connection: { subscribeMessage(callback, message) {
+            callbacks[message.forecast_type] = callback;
+            setTimeout(() => callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 11.234, wind_speed: 18 }] }), 0);
+            return Promise.resolve(() => {});
+          } },
+        };
+        card.hass = hass;
+        document.body.append(card);
+        window.fixture = { card, hass, callbacks };
+      }, { language, title, clock, toggle });
+      await page.waitForFunction(() => window.fixture.card.forecastChart);
+      const state = await page.evaluate(() => {
+        const card = window.fixture.card;
+        const root = card.shadowRoot;
+        const icon = root.querySelector('.weather-icon');
+        const temperature = root.querySelector('.current-temp');
+        const box = element => {
+          if (!element) return null;
+          const r = element.getBoundingClientRect();
+          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+        };
+        return {
+          iconSize: icon.querySelector('img').getBoundingClientRect().width,
+          opacity: getComputedStyle(icon).opacity,
+          aligned: Math.abs(icon.getBoundingClientRect().top - temperature.getBoundingClientRect().top) < 2,
+          temperature: temperature.textContent.trim(),
+          labels: [...root.querySelectorAll('.attribute-label')].map(e => e.textContent.trim()),
+          speed: root.querySelector('.wind-speed-attribute').textContent.trim(),
+          gust: root.querySelector('.wind-gust-speed').textContent.trim(),
+          forecastWind: root.querySelector('.wind-speed').textContent.trim(),
+          chartValue: card.forecastChart.data.datasets[0].data[0],
+          chartLabel: card.forecastChart.data.datasets[0].datalabels.formatter(11.234, { dataset: card.forecastChart.data.datasets[0], dataIndex: 0 }),
+          overflow: document.documentElement.scrollWidth > innerWidth,
+          cardOverflow: root.querySelector('.card').scrollWidth > root.querySelector('.card').clientWidth,
+          boxes: {
+            temp: box(root.querySelector('.temp-info')),
+            icon: box(icon),
+            controls: box(root.querySelector('.main .current-time')),
+            title: box(root.querySelector('.compact-title')),
+            toggle: box(root.querySelector('.forecast-toggle')),
+          },
+          iconSrc: icon.querySelector('img').src,
+        };
+      });
+      assert.equal(state.iconSize, 60);
+      assert.equal(state.opacity, '0.45');
+      assert.equal(state.aligned, true);
+      assert.equal(state.temperature, '12.35°C');
+      assert.deepEqual(state.labels, ['Vind', 'Byvind']);
+      const speedUnit = language.startsWith('he') ? locale.he.units['m/s'] : 'm/s';
+      assert.equal(state.speed, '5.1 ' + speedUnit);
+      assert.equal(state.gust, '7.5 ' + speedUnit);
+      assert.equal(state.forecastWind, '5');
+      assert.equal(state.chartValue, 11.234);
+      assert.match(state.chartLabel, /11°/);
+      assert.equal(state.overflow, false);
+      assert.equal(state.cardOverflow, false);
+      const overlap = (a, b) => a && b && a.left < b.right - 0.5 && b.left < a.right - 0.5
+        && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+      assert.ok(!overlap(state.boxes.temp, state.boxes.icon));
+      assert.ok(!overlap(state.boxes.controls, state.boxes.icon));
+      assert.ok(!overlap(state.boxes.controls, state.boxes.temp));
+      assert.ok(!overlap(state.boxes.title, state.boxes.toggle));
+      if (title && toggle) {
+        assert.ok(state.boxes.title.top < state.boxes.toggle.bottom
+          && state.boxes.toggle.top < state.boxes.title.bottom);
+      }
+      assert.match(state.iconSrc, /^data:image\/svg\+xml,/);
+      await page.evaluate(() => {
+        const { card, hass } = window.fixture;
+        hass.states['sensor.speed'].state = 'unavailable';
+        card.hass = { ...hass };
+      });
+      await page.waitForFunction(() => !window.fixture.card.shadowRoot.querySelector('.wind-speed-attribute'));
+      assert.equal(await page.locator('weather-chart-card-ha .wind-gust-speed').count(), 1);
+      if (toggle) {
+        await page.locator('weather-chart-card-ha .forecast-toggle').click();
+        await page.waitForFunction(() => window.fixture.card.config.forecast.type === 'hourly' && window.fixture.card.forecastChart);
+        const label = await page.evaluate(() => {
+          const chart = window.fixture.card.forecastChart;
+          return chart.data.datasets[0].datalabels.formatter(11.234, { dataset: chart.data.datasets[0], dataIndex: 0 });
+        });
+        assert.match(label, /11\.2°/);
+      }
+      assert.deepEqual(errors, []);
+      assert.deepEqual(blocked, []);
+    } finally { await page.close(); }
+  });
+}
+
+for (const width of [320, 600]) {
+  for (const animated of [false, true]) {
+    test(`compact geometry at ${width}px with ${animated ? 'animated' : 'static'} icons`, async () => {
+      const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+      try {
+        await page.setContent('<!doctype html><style>body{margin:0}weather-chart-card-ha{display:block}</style>');
+        await page.evaluate(() => {
+          customElements.define('ha-card', class extends HTMLElement {
+            connectedCallback() {
+              const root = this.attachShadow({ mode: 'open' });
+              root.innerHTML = '<style>:host{display:block;position:relative}.header{font:24px/1.2 sans-serif;padding:24px 16px 16px}</style><div class="header"></div><slot></slot>';
+              const title = this.getAttribute('header');
+              root.querySelector('.header').textContent = title;
+              if (!title) root.querySelector('.header').remove();
+            }
+          });
+          customElements.define('ha-icon', class extends HTMLElement {
+            connectedCallback() {
+              this.style.cssText = 'display:inline-block;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)';
+            }
+          });
+        });
+        await page.addScriptTag({ content: bundle });
+        await page.evaluate(({ width, animated }) => {
+          const hass = {
+            language: 'sv', config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } },
+            states: { 'weather.home': { state: 'partlycloudy', attributes: {
+              temperature: 16.4, temperature_unit: '°C', humidity: 70, pressure: 1013,
+              pressure_unit: 'hPa', wind_speed: 18, wind_gust_speed: 25,
+              wind_speed_unit: 'km/h', wind_bearing: 225, supported_features: 3,
+            } } },
+            connection: { subscribeMessage(callback) {
+              setTimeout(() => callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 16, wind_speed: 18 }] }), 0);
+              return Promise.resolve(() => {});
+            } },
+          };
+          for (const title of ['Väder', '']) {
+            for (const compact of [false, true]) {
+              const card = document.createElement('weather-chart-card-ha');
+              card.style.width = `${width}px`;
+              card.setConfig({ entity: 'weather.home', title, compact, locale: 'sv', animated_icons: animated,
+                main_icon_size: 60, show_forecast_toggle: true, show_wind_gust_speed: true,
+                show_sun: false, units: { speed: 'm/s' }, forecast: { disable_animation: true } });
+              card.hass = hass;
+              document.body.append(card);
+            }
+          }
+        }, { width, animated });
+        await page.waitForFunction(() => [...document.querySelectorAll('weather-chart-card-ha')].every(card => card.forecastChart));
+        const cards = await page.evaluate(() => [...document.querySelectorAll('weather-chart-card-ha')].map(card => {
+          const root = card.shadowRoot;
+          const rect = selector => {
+            const box = root.querySelector(selector)?.getBoundingClientRect();
+            return box && { top: box.top, bottom: box.bottom, left: box.left, right: box.right, height: box.height, width: box.width };
+          };
+          return { card: rect('ha-card'), main: rect('.main'), temp: rect('.temp-info'), icon: rect('.weather-icon'),
+            toggle: rect('.forecast-toggle'), attrs: rect('.attributes'), chart: rect('.chart-container'),
+            title: rect('.compact-title'), overflow: root.querySelector('.card').scrollWidth > root.querySelector('.card').clientWidth };
+        }));
+        const overlaps = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5
+          && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+        for (const [normal, compact] of [[cards[0], cards[1]], [cards[2], cards[3]]]) {
+          assert.ok(compact.chart.top - compact.card.top < normal.chart.top - normal.card.top, JSON.stringify({ normal, compact }));
+          assert.equal(compact.chart.height, normal.chart.height);
+          assert.equal(compact.chart.width, normal.chart.width);
+          assert.equal(overlaps(normal.temp, normal.icon), false, JSON.stringify(normal));
+          assert.equal(overlaps(normal.toggle, normal.icon), false, JSON.stringify(normal));
+          assert.equal(overlaps(normal.toggle, normal.temp), false, JSON.stringify(normal));
+          assert.equal(normal.overflow, false);
+          assert.ok(Math.abs(compact.icon.top - compact.temp.top) < 2);
+          assert.equal(overlaps(compact.temp, compact.icon), false);
+          assert.equal(overlaps(compact.toggle, compact.icon), false);
+          assert.equal(overlaps(compact.toggle, compact.temp), false);
+          assert.ok(compact.attrs.top >= compact.main.bottom);
+          assert.equal(compact.overflow, false);
+        }
+        assert.ok(cards[1].title);
+        assert.equal(cards[3].title, undefined);
+        assert.ok(cards[3].main.top - cards[3].card.top < cards[1].main.top - cards[1].card.top);
+        const titleless = page.locator('weather-chart-card-ha').nth(3);
+        await titleless.evaluate(card => {
+          card.setConfig({ ...card.config, tap_action: { action: 'more-info' } });
+          window.testActions = 0;
+          card.addEventListener('hass-action', () => window.testActions++);
+        });
+        await titleless.locator('.forecast-toggle').click();
+        await titleless.locator('.forecast-toggle').press('Enter');
+        await page.waitForTimeout(300);
+        assert.equal(await page.evaluate(() => window.testActions), 0);
+        const hidden = await page.evaluate(async () => {
+          const card = document.querySelectorAll('weather-chart-card-ha')[3];
+          card.setConfig({ ...card.config, show_forecast_toggle: false });
+          await card.updateComplete;
+          const root = card.shadowRoot;
+          return {
+            controls: !!root.querySelector('.current-time'),
+            top: root.querySelector('.main').getBoundingClientRect().top - root.querySelector('ha-card').getBoundingClientRect().top,
+            icon: root.querySelector('.weather-icon').getBoundingClientRect().top,
+            temp: root.querySelector('.temp-info').getBoundingClientRect().top,
+          };
+        });
+        assert.equal(hidden.controls, false);
+        assert.ok(hidden.top <= cards[3].main.top - cards[3].card.top);
+        assert.ok(Math.abs(hidden.icon - hidden.temp) < 2);
+      } finally { await page.close(); }
+    });
+  }
+}
+
+test('wind source units and subscription identity survive switching and reconnect', async () => {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }));
+    await page.goto('http://wind.test/');
+    await page.addScriptTag({ content: bundle });
+    await page.evaluate(() => {
+      const card = document.createElement('weather-chart-card-ha');
+      window.subscriptions = [];
+      card.setConfig({
+        entity: 'weather.home', windspeed: 'sensor.speed', wind_gust_speed: 'sensor.gust',
+        show_wind_direction: false, show_wind_speed: false, show_wind_gust_speed: true,
+        show_sun: false, units: { speed: 'm/s' }, show_forecast_toggle: true,
+        forecast: { hourly_entity: 'weather.hourly', disable_animation: true },
+      });
+      card.hass = {
+        language: 'en', config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+        states: {
+          'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', wind_speed_unit: 'km/h', supported_features: 3 } },
+          'weather.hourly': { state: 'sunny', attributes: { wind_speed_unit: 'mph', supported_features: 3 } },
+          'sensor.speed': { state: '10', attributes: { unit_of_measurement: 'm/s' } },
+          'sensor.gust': { state: '36', attributes: { unit_of_measurement: 'km/h' } },
+        },
+        connection: { subscribeMessage(callback, message) {
+          const entry = { callback, message, closed: false };
+          window.subscriptions.push(entry);
+          return Promise.resolve(() => { entry.closed = true; });
+        } },
+      };
+      document.body.append(card);
+      window.card = card;
+    });
+    await page.waitForFunction(() => window.card.shadowRoot.querySelector('.wind-gust-speed'));
+    assert.equal(await page.locator('weather-chart-card-ha').locator('.wind-gust-speed').textContent(), '10 m/s');
+    await page.evaluate(() => window.subscriptions[0].callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 20, wind_speed: 36 }] }));
+    await page.waitForFunction(() => window.card.forecastChart);
+    await page.evaluate(() => window.card.handleForecastTypeToggle());
+    await page.waitForFunction(() => window.subscriptions.length === 2);
+    assert.deepEqual(await page.evaluate(() => window.card.forecasts), []);
+    await page.evaluate(() => {
+      window.subscriptions[0].callback({ forecast: [{ temperature: 99 }] });
+      window.subscriptions[1].callback({ forecast: [{ datetime: '2026-10-18T13:00:00Z', temperature: 18, wind_speed: 10 }] });
+    });
+    await page.waitForFunction(() => window.card.shadowRoot.querySelector('.wind-speed')?.textContent === '4');
+    await page.evaluate(() => window.card.remove());
+    assert.equal(await page.evaluate(() => window.card.forecastChart), null);
+    await page.evaluate(() => document.body.append(window.card));
+    await page.waitForFunction(() => window.subscriptions.length === 3);
+    assert.deepEqual(await page.evaluate(() => window.card.forecasts), []);
+    assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('disconnect cancels delayed observation, timers and chart across repeated reconnects', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.goto('http://lifecycle.test/');
+    await page.addScriptTag({ content: bundle });
+    await page.evaluate(() => {
+      window.observers = { active: 0, created: 0 };
+      window.ResizeObserver = class {
+        observe(element) {
+          if (element.localName === 'ha-card') {
+            this.card = true;
+            window.observers.active++;
+            window.observers.created++;
+          }
+        }
+        disconnect() { if (this.card) window.observers.active--; }
+      };
+      const card = document.createElement('weather-chart-card-ha');
+      card.setConfig({ entity: 'weather.home', show_time: true, autoscroll: true, forecast: { disable_animation: true } });
+      card.hass = {
+        language: 'en', config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+        states: { 'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', supported_features: 3 } } },
+        connection: { subscribeMessage(callback) {
+          setTimeout(() => callback({ forecast: [{ datetime: new Date().toISOString(), temperature: 20 }] }), 0);
+          return Promise.resolve(() => {});
+        } },
+      };
+      document.body.append(card);
+      card.remove();
+      window.card = card;
+    });
+    await page.waitForTimeout(20);
+    assert.equal(await page.evaluate(() => window.observers.active), 0);
+    for (let i = 0; i < 2; i++) {
+      await page.evaluate(() => document.body.append(window.card));
+      await page.waitForFunction(() => window.card.forecastChart && window.observers.active === 1);
+      if (i === 0) {
+        await page.evaluate(() => {
+          window.originalRaf = window.requestAnimationFrame;
+          window.originalCancelRaf = window.cancelAnimationFrame;
+          window.cancelledFrames = [];
+          window.requestAnimationFrame = () => 8765;
+          window.cancelAnimationFrame = id => window.cancelledFrames.push(id);
+          window.card.hass = { ...window.card._hass, themes: { theme: 'dark', darkMode: true } };
+        });
+      }
+      await page.evaluate(() => window.card.remove());
+      const state = await page.evaluate(() => ({
+        observers: window.observers.active,
+        chart: window.card.forecastChart,
+        clock: window.card.clockInterval,
+        autoscroll: window.card.autoscrollTimeout,
+        resize: window.card.resizeAttachTimeout,
+      }));
+      assert.deepEqual(state, { observers: 0, chart: null, clock: null, autoscroll: null, resize: null });
+      if (i === 0) {
+        const cancelled = await page.evaluate(() => {
+          window.requestAnimationFrame = window.originalRaf;
+          window.cancelAnimationFrame = window.originalCancelRaf;
+          return window.cancelledFrames;
+        });
+        assert.ok(cancelled.includes(8765));
+      }
+    }
+  } finally { await page.close(); }
+});
+
+test('chart labels and values follow changed forecast source units', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }));
+    await page.goto('http://forecast-units.test/');
+    await page.addScriptTag({ content: bundle });
+    await page.evaluate(() => {
+      const card = document.createElement('weather-chart-card-ha');
+      card.setConfig({ entity: 'weather.home', show_main: false,
+        forecast: { daily_entity: 'weather.forecast', disable_animation: true } });
+      const states = {
+        'weather.home': { state: 'sunny', attributes: { temperature_unit: '°C', supported_features: 0 } },
+        'weather.forecast': { state: 'sunny', attributes: { temperature_unit: '°F', precipitation_unit: 'mm', supported_features: 1 } },
+      };
+      const hass = { language: 'en', states, config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } },
+        connection: { subscribeMessage(callback) {
+          setTimeout(() => callback({ forecast: [{ datetime: '2026-10-18T12:00:00Z', temperature: 32, precipitation: 1 }] }), 0);
+          return Promise.resolve(() => {});
+        } } };
+      card.hass = hass;
+      document.body.append(card);
+      window.fixture = { card, hass };
+    });
+    await page.waitForFunction(() => window.fixture.card.forecastChart);
+    const result = await page.evaluate(() => {
+      const { card, hass } = window.fixture;
+      const read = () => {
+        const chart = card.forecastChart;
+        const label = chart.options.plugins.tooltip.callbacks.label;
+        const temp = chart.data.datasets[0];
+        const rain = chart.data.datasets[2];
+        return {
+          temperature: temp.data[0],
+          tempLabel: label({ dataset: temp, datasetIndex: 0, dataIndex: 0, raw: temp.data[0] }),
+          rainLabel: label({ dataset: rain, datasetIndex: 2, dataIndex: 0, formattedValue: '1' }),
+        };
+      };
+      const before = read();
+      const oldChart = card.forecastChart;
+      hass.states['weather.forecast'] = { state: 'sunny',
+        attributes: { temperature_unit: 'unknown', precipitation_unit: 'in', supported_features: 1 } };
+      card.hass = { ...hass };
+      return { before, after: read(), rebuilt: oldChart !== card.forecastChart };
+    });
+    assert.equal(result.before.temperature, 0);
+    assert.match(result.before.tempLabel, /°C/);
+    assert.match(result.before.rainLabel, /mm/);
+    assert.equal(result.rebuilt, true);
+    assert.equal(result.after.temperature, 32);
+    assert.match(result.after.tempLabel, /unknown/);
+    assert.match(result.after.rainLabel, /in/);
+  } finally { await page.close(); }
+});
 
 for (const {name, forecast, expected} of [
   {name:'defaults', forecast:{}, expected:[[], [5, 5]]},
@@ -414,6 +892,7 @@ test('editor choices render without Home Assistant components and update the con
       if (path === '/') return route.fulfill({ contentType:'text/html', body:'<!doctype html><meta charset="utf-8"><script src="/card.js"></script>' });
       return route.abort();
     });
+
     await page.goto('http://editor.test/');
     // No ha-radio, ha-checkbox or ha-switch is defined here, as in a dashboard
     // where Home Assistant has not loaded them.
@@ -450,5 +929,70 @@ test('editor choices render without Home Assistant components and update the con
     assert.equal(result.last.forecast.style, 'style1');
     assert.equal(result.checkboxes, 4);
     assert.deepEqual(errors, []);
+  } finally { await page.close(); }
+});
+
+test('editor exposes strict fallback and independent precision controls', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.goto('http://editor-options.test/');
+    await page.addScriptTag({ content: bundle });
+    const result = await page.evaluate(async () => {
+      const editor = document.createElement('weather-chart-card-ha-editor');
+      editor.hass = { states: { 'weather.home': { state: 'sunny', attributes: {} } }, config: {}, language: 'en' };
+      editor.setConfig({ entity: 'weather.home' });
+      let config;
+      editor.addEventListener('config-changed', e => { config = e.detail.config; });
+      document.body.append(editor);
+      await editor.updateComplete;
+      const root = editor.shadowRoot;
+      const fallback = root.querySelector('#alternative-fallback');
+      fallback.value = 'strict';
+      fallback.dispatchEvent(new Event('change'));
+      const strict = config.alternative_sensor_fallback;
+      const precision = root.querySelector('select[aria-label="Current wind speed precision"]');
+      precision.value = '1';
+      precision.dispatchEvent(new Event('change'));
+      const speedPrecision = config.precision.wind_speed;
+      const label = root.querySelector('ha-textfield[label="Wind gust label (optional)"]');
+      label.value = 'Byvind';
+      label.dispatchEvent(new Event('change'));
+      return { strict, precision: speedPrecision, label: config.attribute_labels.wind_gust_speed, count: root.querySelectorAll('select[aria-label$="precision"]').length };
+    });
+    assert.deepEqual(result, { strict: 'strict', precision: 1, label: 'Byvind', count: 6 });
+  } finally { await page.close(); }
+});
+
+test('editor reconnect resubscribes and rejects the detached probe', async () => {
+  const page = await browser.newPage();
+  try {
+    await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html>' }));
+    await page.goto('http://editor-reconnect.test/');
+    await page.addScriptTag({ content: bundle });
+    const result = await page.evaluate(async () => {
+      const callbacks = [];
+      let closed = 0;
+      const editor = document.createElement('weather-chart-card-ha-editor');
+      editor.hass = { states: { 'weather.home': { state: 'sunny', attributes: {} } },
+        connection: { subscribeMessage(callback) {
+          callbacks.push(callback);
+          return Promise.resolve(() => { closed++; });
+        } } };
+      editor.setConfig({ entity: 'weather.home' });
+      document.body.append(editor);
+      await editor.updateComplete;
+      editor.remove();
+      editor._probeProbability();
+      callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+      const detached = { count: callbacks.length, value: editor._hasProbability };
+      document.body.append(editor);
+      await editor.updateComplete;
+      callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+      callbacks[1]({ forecast: [{}] });
+      await Promise.resolve();
+      return { detached, count: callbacks.length, value: editor._hasProbability, closed };
+    });
+    assert.deepEqual(result, { detached: { count: 1, value: undefined }, count: 2, value: false, closed: 2 });
   } finally { await page.close(); }
 });

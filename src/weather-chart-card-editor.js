@@ -1,5 +1,6 @@
 import { LitElement, html } from 'lit';
 import { configValue } from './defaults.js';
+import { editorStyles } from './weather-chart-card-editor-styles.js';
 
 const ALT_SCHEMA = [
   { name: "temp", title: "Alternative temperature sensor", selector: { entity: { domain: 'sensor' } } },
@@ -102,6 +103,23 @@ class WeatherChartCardEditor extends LitElement {
     return this._value(path) === true;
   }
 
+  _precisionControl(path, label) {
+    const value = this._value(path);
+    return html`
+      <div class="select-row">
+        <label>${label}</label>
+        <select class="native-select" aria-label=${label}
+          .value=${Number.isInteger(value) && value >= 0 && value <= 2 ? String(value) : ''}
+          @change=${(e) => this._valueChanged({ target: { value: e.target.value === '' ? undefined : Number(e.target.value) } }, path)}>
+          <option value="">Default</option>
+          <option value="0">0 decimals</option>
+          <option value="1">1 decimal</option>
+          <option value="2">2 decimals</option>
+        </select>
+      </div>
+    `;
+  }
+
   updated(changedProperties) {
     if (changedProperties.has('hass')) {
       this.fetchEntities();
@@ -114,10 +132,18 @@ class WeatherChartCardEditor extends LitElement {
     }
   }
 
+  connectedCallback() {
+    super.connectedCallback();
+    this._probabilityDetached = false;
+    if (this.hasUpdated) this._probeProbability();
+  }
+
   disconnectedCallback() {
     super.disconnectedCallback();
+    this._probabilityDetached = true;
     this._stopProbabilityProbe();
     this._probabilityKey = null;
+    this._probabilityConnection = null;
   }
 
   /**
@@ -129,7 +155,7 @@ class WeatherChartCardEditor extends LitElement {
    * entity cannot be asked), so the switches remain usable meanwhile.
    */
   _probeProbability() {
-    if (!this.hass || !this.hass.connection || !this._config || !this._config.entity) {
+    if (this._probabilityDetached || !this.hass || !this.hass.connection || !this._config || !this._config.entity) {
       return;
     }
     const type = this._value('forecast.type') || 'daily';
@@ -137,39 +163,57 @@ class WeatherChartCardEditor extends LitElement {
     const entityId = (type === 'hourly' ? forecastConfig.hourly_entity : forecastConfig.daily_entity)
       || this._config.entity;
     const key = `${entityId}|${type}`;
-    if (key === this._probabilityKey) {
+    const connection = this.hass.connection;
+    if (key === this._probabilityKey && connection === this._probabilityConnection) {
       return;
     }
     this._stopProbabilityProbe();
     this._probabilityKey = key;
+    this._probabilityConnection = connection;
     this._hasProbability = undefined;
 
-    const unsubscribe = this.hass.connection.subscribeMessage((event) => {
-      const forecast = (event && event.forecast) || [];
-      if (this._probabilityKey !== key || !forecast.length) {
-        return;
-      }
-      this._hasProbability = forecast.some((item) => item.precipitation_probability !== null
-        && item.precipitation_probability !== undefined
-        && Number.isFinite(Number(item.precipitation_probability)));
-      this._stopProbabilityProbe();
-      this.requestUpdate();
-    }, {
-      type: 'weather/subscribe_forecast',
-      forecast_type: type,
-      entity_id: entityId,
+    const probe = { closed: false, unsubscribe: null };
+    this._probabilityProbe = probe;
+    let unsubscribe;
+    try {
+      unsubscribe = connection.subscribeMessage((event) => {
+        const forecast = (event && event.forecast) || [];
+        if (this._probabilityProbe !== probe || !forecast.length) {
+          return;
+        }
+        this._hasProbability = forecast.some((item) => item.precipitation_probability !== null
+          && item.precipitation_probability !== undefined
+          && Number.isFinite(Number(item.precipitation_probability)));
+        this._stopProbabilityProbe();
+        this.requestUpdate();
+      }, {
+        type: 'weather/subscribe_forecast',
+        forecast_type: type,
+        entity_id: entityId,
+      });
+    } catch (error) {
+      if (this._probabilityProbe === probe) this._probabilityProbe = null;
+      console.warn('weather-chart-card-ha: editor forecast probe failed', error);
+      return;
+    }
+    probe.unsubscribe = Promise.resolve(unsubscribe).catch((error) => {
+      console.warn('weather-chart-card-ha: editor forecast probe failed', error);
     });
-    this._probabilityUnsubscribe = Promise.resolve(unsubscribe);
-    // An entity without this forecast type rejects: leave the answer unknown.
-    this._probabilityUnsubscribe.catch(() => {});
+    if (probe.closed) this._releaseProbabilityProbe(probe);
   }
 
   _stopProbabilityProbe() {
-    const pending = this._probabilityUnsubscribe;
-    this._probabilityUnsubscribe = null;
-    if (pending) {
-      pending.then((unsubscribe) => unsubscribe && unsubscribe()).catch(() => {});
-    }
+    const probe = this._probabilityProbe;
+    this._probabilityProbe = null;
+    if (!probe) return;
+    probe.closed = true;
+    if (probe.unsubscribe) this._releaseProbabilityProbe(probe);
+  }
+
+  _releaseProbabilityProbe(probe) {
+    probe.unsubscribe.then((unsubscribe) => {
+      if (typeof unsubscribe === 'function') return unsubscribe();
+    }).catch((error) => console.error('weather-chart-card-ha: editor forecast cleanup failed', error));
   }
 
   // A probability switch greyed out while the forecast has no probability.
@@ -415,151 +459,7 @@ class WeatherChartCardEditor extends LitElement {
 
 
     return html`
-      <style>
-        .switch-label {
-          padding-left: 14px;
-        }
-        .switch-container.locked .switch-label {
-          opacity: 0.5;
-        }
-        .switch-container {
-          margin-bottom: 12px;
-        }
-        .page-container {
-	  display: none;
-        }
-        .page-container.active {
-          display: block;
-        }
-        .time-container {
-          display: flex;
-          flex-direction: row;
-          margin-bottom: 12px;
-        }
-        .icon-container {
-          display: flex;
-          flex-direction: column;
-          align-items: stretch;
-          margin-bottom: 12px;
-        }
-        .switch-right {
-          display: flex;
-          flex-direction: row;
-          align-items: center;
-        }
-        .checkbox-container {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-        }
-        .textfield-container {
-          display: flex;
-          flex-direction: column;
-          margin-bottom: 10px;
-	  gap: 20px;
-        }
-        .radio-container {
-          display: flex;
-          align-items: center;
-          gap: 5px;
-        }
-        .radio-container.group-spacing,
-        .select-row.group-spacing {
-          margin-top: 16px;
-        }
-        /* Native controls: HA loads ha-radio and ha-checkbox only for its own
-           screens, so in a card editor they can be undefined and render nothing. */
-        .select-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin: 8px 0;
-        }
-        .select-row[hidden] {
-          display: none;
-        }
-        .native-select {
-          flex: 1;
-          padding: 8px;
-          font-size: 14px;
-          border: 1px solid var(--divider-color);
-          border-radius: 4px;
-          background: var(--card-background-color);
-          color: var(--primary-text-color);
-        }
-        .native-checkbox {
-          width: 18px;
-          height: 18px;
-          margin: 8px;
-          accent-color: var(--primary-color);
-        }
-        .radio-group {
-          display: flex;
-          align-items: center;
-        }
-        .radio-group label {
-          margin-left: 4px;
-        }
-        .buttons-container {
-          display: flex;
-          gap: 4px;
-          border-bottom: 2px solid var(--divider-color);
-          margin: 20px 0;
-        }
-        .page-button {
-          background: transparent;
-          border: none;
-          border-bottom: 3px solid transparent;
-          padding: 12px 16px;
-          cursor: pointer;
-          color: var(--secondary-text-color);
-          font-size: 14px;
-          font-weight: 400;
-          transition: all 0.2s ease;
-          outline: none;
-        }
-        .page-button:hover {
-          background: var(--secondary-background-color, rgba(0, 0, 0, 0.05));
-          color: var(--primary-text-color);
-        }
-        .page-button.active {
-          border-bottom-color: var(--primary-color);
-          color: var(--primary-color);
-          font-weight: 500;
-        }
-        .flex-container {
-          display: flex;
-          flex-direction: row;
-          gap: 20px;
-        }
-        .flex-container ha-textfield {
-          flex-basis: 50%;
-          flex-grow: 1;
-        }
-        .field-label-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .experimental-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: 2px 8px;
-          border-radius: 999px;
-          font-size: 11px;
-          font-weight: 600;
-          letter-spacing: 0.2px;
-          text-transform: uppercase;
-          background: rgba(255, 152, 0, 0.2);
-          color: rgb(245, 124, 0);
-          border: 1px solid rgba(255, 152, 0, 0.5);
-        }
-        .adaptive-note {
-          font-size: 12px;
-          color: var(--secondary-text-color);
-          margin-top: -8px;
-        }
-      </style>
+      ${editorStyles}
       <div>
       <div class="textfield-container">
 <label class="switch-label">Entity</label>
@@ -785,6 +685,14 @@ class WeatherChartCardEditor extends LitElement {
           @change="${(e) => this._valueChanged(e, 'main_icon_size')}"
         ></ha-textfield>
       </div>
+      <div class="switch-container">
+        <ha-switch .checked=${this._flag('compact')} @change=${(e) => this._valueChanged(e, 'compact')}></ha-switch>
+        <label class="switch-label">Compact layout</label>
+      </div>
+      <ha-textfield label="Main icon opacity (0 to 1)" type="number" min="0" max="1" step="0.05"
+        .value=${String(this._value('main_icon_opacity'))}
+        @change=${(e) => this._valueChanged({ target: { value: e.target.value === '' ? undefined : Number(e.target.value) } }, 'main_icon_opacity')}>
+      </ha-textfield>
 
       <div class="buttons-container">
         <button class="page-button ${this.currentPage === 'card' ? 'active' : ''}" @click="${() => this.showPage('card')}">Main</button>
@@ -1256,6 +1164,16 @@ class WeatherChartCardEditor extends LitElement {
 
         <!-- Units Page -->
         <div class="page-container ${this.currentPage === 'units' ? 'active' : ''}">
+          ${this._precisionControl('precision.wind_speed', 'Current wind speed precision')}
+          ${this._precisionControl('precision.wind_gust_speed', 'Current wind gust precision')}
+          ${this._precisionControl('forecast.precision.wind_speed', 'Forecast wind speed precision')}
+          ${this._precisionControl('precision.temperature', 'Current temperature precision')}
+          ${this._precisionControl('forecast.precision.hourly_temperature', 'Hourly temperature precision')}
+          ${this._precisionControl('forecast.precision.daily_temperature', 'Daily temperature precision')}
+          <ha-textfield label="Wind speed label (optional)" .value=${this._config.attribute_labels?.wind_speed || ''}
+            @change=${(e) => this._valueChanged(e, 'attribute_labels.wind_speed')}></ha-textfield>
+          <ha-textfield label="Wind gust label (optional)" .value=${this._config.attribute_labels?.wind_gust_speed || ''}
+            @change=${(e) => this._valueChanged(e, 'attribute_labels.wind_gust_speed')}></ha-textfield>
           <div class="textfield-container">
             <div>
               <label>Convert temperature to</label>
@@ -1334,6 +1252,15 @@ class WeatherChartCardEditor extends LitElement {
         <!-- Alternate Page -->
         <div class="page-container ${this.currentPage === 'alternate' ? 'active' : ''}">
           <h5>Alternative sensors for the main card attributes:</h5>
+          <div class="select-row">
+            <label for="alternative-fallback">Unavailable or invalid alternative sensor</label>
+            <select id="alternative-fallback" class="native-select"
+              .value=${this._config.alternative_sensor_fallback === 'strict' ? 'strict' : 'weather'}
+              @change=${(e) => this._valueChanged(e, 'alternative_sensor_fallback')}>
+              <option value="weather">Use weather entity</option>
+              <option value="strict">Do not substitute</option>
+            </select>
+          </div>
           <ha-form
             .data=${this._config}
             .schema=${ALT_SCHEMA}

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>Weather card preview</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 24px; background: #f2f4f6; color: #24292f; }
+    main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 20px; }
+    ha-card { display: block; background: white; border-radius: 12px; box-shadow: 0 1px 5px #0002; }
+    weather-chart-card-ha { display: block; min-width: 0; }
+    button { padding: 8px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Weather card preview</h1>
+  <p>Mock data only. Compare the default layout with the compact Swedish configuration.
+    Forecast buttons switch between mock daily and hourly data.</p>
+  <button id="sensor">Make wind speed unavailable</button>
+  <main>
+    <section><h2>Default</h2><weather-chart-card-ha id="default"></weather-chart-card-ha></section>
+    <section><h2>Compact with instrument sensors</h2><weather-chart-card-ha id="compact"></weather-chart-card-ha></section>
+  </main>
+  <script type="module" src="./dist/weather-chart-card-ha.js"></script>
+  <script>
+    customElements.define('ha-card', class extends HTMLElement {
+      static get observedAttributes() { return ['header']; }
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' }).innerHTML = '<style>header{font-weight:600;font-size:20px;padding:20px 16px 8px}header:empty{display:none}</style><header></header><slot></slot>';
+      }
+      attributeChangedCallback() { this.shadowRoot.querySelector('header').textContent = this.getAttribute('header') || ''; }
+    });
+    customElements.define('ha-icon', class extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: 'open' }).innerHTML = '<style>:host{display:inline-block;width:1em;text-align:center}</style>◦';
+      }
+    });
+    const forecasts = (type) => {
+      const start = Date.now();
+      return Array.from({ length: 10 }, (_, i) => ({
+        datetime: new Date(start + i * (type === 'hourly' ? 3600000 : 86400000)).toISOString(),
+        temperature: 16.25 + i / 2, templow: 9.5 + i / 2, condition: 'partlycloudy',
+        precipitation: i / 10, wind_speed: 18 + i, wind_bearing: 45,
+      }));
+    };
+    const hass = {
+      language: 'en', config: { time_zone: 'Europe/Stockholm', unit_system: { temperature: '°C', length: 'km' } },
+      states: {
+        'weather.home': { state: 'partlycloudy', attributes: {
+          temperature: 16.35, temperature_unit: '°C', humidity: 65, pressure: 1013, pressure_unit: 'hPa',
+          wind_speed: 27, wind_gust_speed: 36, wind_speed_unit: 'km/h', wind_bearing: 45, supported_features: 3,
+        } },
+        'sensor.wind_speed': { state: '18.36', attributes: { unit_of_measurement: 'km/h' } },
+        'sensor.wind_gust': { state: '7.5', attributes: { unit_of_measurement: 'm/s' } },
+      },
+      connection: { subscribeMessage(callback, message) {
+        const timer = setTimeout(() => callback({ forecast: forecasts(message.forecast_type) }), 0);
+        return Promise.resolve(() => clearTimeout(timer));
+      } },
+    };
+    customElements.whenDefined('weather-chart-card-ha').then(() => {
+      const standard = document.getElementById('default');
+      const compact = document.getElementById('compact');
+      standard.setConfig({ entity: 'weather.home', show_forecast_toggle: true, show_sun: false });
+      compact.setConfig({
+        entity: 'weather.home', title: 'Väder', locale: 'sv', compact: true,
+        main_icon_size: 60, main_icon_opacity: 0.45, show_forecast_toggle: true,
+        show_sun: false, show_wind_gust_speed: true, windspeed: 'sensor.wind_speed',
+        wind_gust_speed: 'sensor.wind_gust', alternative_sensor_fallback: 'strict',
+        units: { speed: 'm/s' }, precision: { wind_speed: 1, wind_gust_speed: 1, temperature: 1 },
+        attribute_labels: { wind_speed: 'Vind', wind_gust_speed: 'Byvind' },
+        forecast: { precision: { wind_speed: 0, hourly_temperature: 1, daily_temperature: 0 } },
+      });
+      standard.hass = hass;
+      compact.hass = hass;
+      document.getElementById('sensor').addEventListener('click', (event) => {
+        const sensor = hass.states['sensor.wind_speed'];
+        const available = sensor.state === 'unavailable';
+        sensor.state = available ? '18.36' : 'unavailable';
+        event.target.textContent = available ? 'Make wind speed unavailable' : 'Restore wind speed';
+        standard.hass = { ...hass };
+        compact.hass = { ...hass };
+      });
+    });
+  </script>
+</body>
+</html>

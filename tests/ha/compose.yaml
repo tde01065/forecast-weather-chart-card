@@ -1,0 +1,15 @@
+name: forecast-card-test
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.11.3
+    ports:
+      - "127.0.0.1:${HA_TEST_PORT:-8124}:8123"
+    volumes:
+      - ha-state:/config
+      - ./configuration.yaml:/config/configuration.yaml:ro
+      - ./dashboard.yaml:/config/ui-lovelace.yaml:ro
+      - ./custom_components/forecast_card_fixture:/config/custom_components/forecast_card_fixture:ro
+      - ../../dist:/config/www/forecast-card:ro
+
+volumes:
+  ha-state:

@@ -1,0 +1,114 @@
+title: Forecast card acceptance
+views:
+  - title: Layout comparison
+    path: acceptance
+    cards:
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "### Default with title"
+          - &comparison
+            type: custom:weather-chart-card-ha
+            entity: weather.fixture_weather
+            title: Väder
+            compact: false
+            locale: sv
+            animated_icons: false
+            main_icon_size: 60
+            main_icon_opacity: 0.45
+            show_forecast_toggle: true
+            show_wind_gust_speed: true
+            temp: sensor.fixture_temperature
+            humid: sensor.fixture_humidity
+            press: sensor.fixture_pressure
+            windspeed: sensor.fixture_wind_speed
+            wind_gust_speed: sensor.fixture_wind_gust
+            winddir: sensor.fixture_wind_bearing
+            units:
+              temperature: "°C"
+              pressure: hPa
+              speed: m/s
+            precision:
+              temperature: 1
+              wind_speed: 1
+              wind_gust_speed: 1
+            attribute_labels:
+              wind_speed: Vind
+              wind_gust_speed: Byvind
+            forecast:
+              precision:
+                wind_speed: 0
+                hourly_temperature: 0
+                daily_temperature: 0
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "### Compact with title"
+          - <<: *comparison
+            compact: true
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "### Default without title"
+          - <<: *comparison
+            title: ""
+      - type: vertical-stack
+        cards:
+          - type: markdown
+            content: "### Compact without title"
+          - <<: *comparison
+            title: ""
+            compact: true
+  - title: Fallback and recovery
+    path: fallback
+    cards:
+      - type: entities
+        title: Simulate sensor failure and recovery
+        entities:
+          - input_boolean.fixture_speed_available
+          - input_boolean.fixture_gust_available
+      - <<: *comparison
+        title: Compact - fallback
+        compact: true
+      - type: custom:weather-chart-card-ha
+        entity: weather.fixture_weather
+        title: Compact - strict alternatives
+        compact: true
+        alternative_sensor_fallback: strict
+        windspeed: sensor.fixture_wind_speed
+        wind_gust_speed: sensor.fixture_wind_gust
+        show_wind_gust_speed: true
+        show_forecast_toggle: true
+        units:
+          speed: m/s
+        precision:
+          wind_speed: 1
+          wind_gust_speed: 2
+        attribute_labels:
+          wind_speed: Speed
+          wind_gust_speed: Gust
+  - title: Measurement precision
+    path: precision
+    cards:
+      - <<: *comparison
+        title: Independent precision
+        compact: true
+        precision:
+          temperature: 2
+          wind_speed: 1
+          wind_gust_speed: 2
+        forecast:
+          precision:
+            wind_speed: 0
+            hourly_temperature: 1
+            daily_temperature: 0
+  - title: Static and animated
+    path: icons
+    cards:
+      - <<: *comparison
+        title: Static icon
+        compact: true
+      - <<: *comparison
+        title: Animated icon
+        compact: true
+        animated_icons: true

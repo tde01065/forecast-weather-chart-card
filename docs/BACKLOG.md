@@ -1,23 +1,171 @@
 # Development backlog
 
-Status as of 2026-11-26. See BASELINE.md for historical evidence and item entries below for subsequent verification. Priorities and configuration shapes below are proposals, not approved contracts. P0 = data correctness; P1 = important reliability/build/UX; P2 = secondary improvements; P3 = polish. Start with FWC-11 to establish reproducible builds, then data correctness, reliability and presentation. Do not bundle unrelated fixes.
+See BASELINE.md for historical evidence. This branch integrates the remaining items for practical evaluation; release and deployment remain separate decisions. P0 = data correctness; P1 = important reliability/build/UX; P2 = secondary improvements; P3 = polish.
 
 | ID | Priority | Status | Problem / acceptance direction |
 |---|---|---|---|
-| FWC-01 | P0 | Static defect identified | Alternative wind speed and gust sensors are read via readSensorState but converted using weather entity wind_speed_unit in renderAttributes. Carry source value and unit together, convert from actual source, test mixed units, separate speed/gust units and weather fallback. Forecasts use resolved forecast entity units. |
-| FWC-02 | P0 | Static defect identified | Reject invalid, missing, nonfinite and unsupported values/units rather than coercing null/empty to zero or labeling unconverted values as target unit. Test unknown/unavailable, zero, malformed strings, unsupported units and supported Beaufort conversion (inverse approximate). Validate and normalize numeric wind bearings including wraparound. |
-| FWC-03 | P0 | Design required | Explicit alternative-sensor fallback policy. Upstream falls back to weather data for absent/unavailable sensors; existing tests intentionally cover that behavior. Preserve default compatibility, allow strict sensor-only display so instrument data is not silently replaced by forecast/provider values. Define invalid-value and missing-unit semantics; consider source indication. |
-| FWC-04 | P1 | Feature required | Separate conversion from presentation. Configurable current speed and gust precision (desired one decimal), forecast wind precision (desired integer), Beaufort integer. Preserve existing defaults; test both units and rounding boundaries. |
-| FWC-05 | P1 | Static risk, reproduce first | Forecast type toggle may retain previous forecasts until first target payload; callbacks check type but not subscription identity. Test rapid toggles, delayed callbacks, entity changes and disconnect/reconnect. Ensure stale data never renders as another type/entity; define loading/cache behavior. |
-| FWC-06 | P1 | Feature required | Optional compact responsive header layout, default unchanged. Desired main icon 60 px with configurable opacity, alignment with temperature top, near toggle, no wasted vertical space. Use layout rather than hard-coded offsets or private CSS overrides. Test narrow/wide widths, long translations, RTL, toggle hidden, clock and title variations. |
-| FWC-07 | P2 | Feature required | Independent current, hourly and daily temperature precision. Existing forecast.round_temp also affects current. Preserve legacy configuration semantics when new options absent. |
-| FWC-08 | P2 | Static risk, reproduce first | Verify Chart.js teardown on disconnect, cancellation of scheduled redraws and subscriptions, clock and resize lifecycle. drawChart destroys on redraw; missing canvas may schedule repeated requestAnimationFrame. Test detach/reconnect, hidden forecast and rapid config changes; fix only proven issues. |
-| FWC-09 | P2 | Partial baseline PASS | Bundle already includes local animated icons; offline animated-icon browser test passed. Extend regression to full runtime rendering and toggling without external browser requests. Editor geocoding/timezone lookups may be optional online functions; distinguish editor from runtime. Do not claim weather-provider data is available offline. |
-| FWC-10 | P3 | Feature required | Improve Swedish toggle labels (proposed Dygnsprognos / Timprognos) and cardinal directions (e.g. NE -> NO). Confirm terminology, preserve locale fallback and other languages. Check layout impact of longer labels. |
-| FWC-11 | P1 | Implementation and validation complete; pending PR | Windows (Node 26.13.0, npm 11.20.0): regression reproduced before fix (Windows transform returned null; 1 failed, 5 passed); after path normalization, npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Independent Linux validation in node:22-bookworm-slim (Debian 12, Node 22.23.4, npm 10.9.9): npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Linux bundle is 580441 bytes, SHA-256 1B20E67A913A0173A6BBA9B880CC2A2515285B06D8F1E52D478BC6CE1D6238F7; byte-identical to the Windows bundle and historical upstream artifact. |
-| FWC-12 | P2 | Feature required | Optional per-attribute localized labels, especially Wind and Gust (Swedish Vind / Byvind). Render real DOM text, accessible and responsive, default off. Proposed attribute_labels mapping; agree on schema and editor UX before implementation. Test independent visibility and gust-only rendering (current outer wind group condition may omit gust when other fields hidden). |
+| FWC-01 | P0 | Complete | Independently track speed and gust sensor units and the selected forecast entity unit; mixed units, fallback and switching tested. |
+| FWC-02 | P0 | Complete | Numeric validation, zero handling, unit provenance and normalized bearings; unsupported units remain unconverted. Beaufort inverse is approximate. |
+| FWC-03 | P0 | Complete | Default weather fallback and opt-in strict policy, with editor and invalid-sensor tests. Missing/unsupported units do not trigger fallback. |
+| FWC-04 | P1 | Complete | Independent current speed, gust and forecast wind precision; conversion precedes rounding and Beaufort remains integer. |
+| FWC-05 | P1 | Complete | Subscription identity, loading, rotation, stale callbacks, connection replacement and delayed unsubscribe covered by automated tests. |
+| FWC-06 | P1 | Complete; visually accepted | Optional responsive compact layout and icon opacity; browser coverage includes 320–1200 px, Swedish, RTL, title, clock and toggle variations. The user approved visual acceptance in the isolated real HA frontend on 2026-11-26. |
+| FWC-07 | P2 | Complete | Independent current/hourly/daily temperature precision overrides legacy round_temp per reading; chart calculations retain precision. |
+| FWC-08 | P2 | Complete | Chart, subscription, timers, redraw frame and resize cleanup tested across hide, detach and reconnect. |
+| FWC-09 | P2 | Complete | Browser integration exercises bundled runtime with external requests blocked; online editor lookups and fresh provider data still require connectivity. |
+| FWC-10 | P3 | Complete | Swedish forecast and compass names corrected; longer labels tested in compact layouts. |
+| FWC-11 | P1 | Complete; merged and verified | Windows (Node 26.13.0, npm 11.20.0): regression reproduced before fix (Windows transform returned null; 1 failed, 5 passed); after path normalization, npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Independent Linux validation in node:22-bookworm-slim (Debian 12, Node 22.23.4, npm 10.9.9): npm ci, npm run build, npm test (46/46) and npm run test:rtl (20/20) passed. Linux bundle is 580441 bytes, SHA-256 1B20E67A913A0173A6BBA9B880CC2A2515285B06D8F1E52D478BC6CE1D6238F7; byte-identical to the Windows bundle and historical upstream artifact. |
+| FWC-12 | P2 | Complete | Independent optional wind and gust DOM text labels, editor controls and gust-only browser coverage. |
 
 ## Technical debt / investigation
+
+### Subsequent work on `feature/forecast-card-improvements`
+
+- A regression reproduced stale daily data during an hourly switch; a later
+  lifecycle regression reproduced a clock interval restarting after detach.
+  Both are covered by automated tests. The browser fixture uses mock Home
+  Assistant data; real installations and all device sizes are not covered.
+- Validation of the initial partial commit: Windows Node 22.23.5 and Linux
+  `node:22-bookworm-slim` Node 22.23.4 each passed `npm ci`, `npm run build`,
+  50 unit tests and 21 browser tests. An earlier Windows browser run exposed a
+  Chart.js canvas reuse error (20/21); chart cleanup was adjusted and the
+  browser suite then passed twice on Windows and once on Linux. Both builds
+  generated 583088 bytes with SHA-256
+  `fd8309f1a7dfbe94f4e6b7a99cf898a1d5d62f3c5961c1574c668413e34529e0`.
+  This evidence applies only to that partial commit.
+
+- Integrated validation: Windows Node 22.23.5 and isolated Linux
+  `node:22-bookworm-slim` Node 22.23.4 passed `npm ci`, `npm run build`,
+  57 unit tests and 28 browser tests each. Windows also passed a separate
+  Chromium run. Both bundles were byte-identical: 589632 bytes, SHA-256
+  `77f6f5df38e073ca7c6e6a7e3121247db333d7820634343b3e0058a14dce96e0`.
+- Local CodeScene delta analysis reports increased complexity in the already
+  large main card and editor, plus misleading findings on the generated,
+  minified bundle. These remain maintenance risks; no findings were suppressed.
+
+### Consolidated review, 2026-11-26
+
+- Measurement parsing and conversion and the editor stylesheet were separated
+  into cohesive modules. Local CodeScene 1.0.58 against master reports
+  `main.js` 1.84 -> 1.68 (previously 1.58) and the editor 4.53 -> 4.74
+  (previously 4.47). The main file still regresses: its rendering, forecast
+  lifecycle and configuration methods remain large and complex. Avoiding a
+  broad, behavior-risking rewrite leaves those findings open. The editor probe
+  also remains complex after lifecycle hardening. The new measurement module
+  scores 8.67 and has pressure/conditional complexity findings; the generated
+  bundle and test code have additional delta findings.
+- A forecast entity changing units could leave old chart labels and conversion
+  assumptions in a reused chart. The chart now rebuilds when source or display
+  units change, including when both source units map to the same display unit.
+  Unsupported pressure units matching inherited object names now remain
+  unconverted. Regression tests include unchanged-unit negative controls.
+- Editor probability probes now identify the connection and individual
+  subscription, reject stale events, and release delayed or synchronous
+  subscriptions. Unsupported forecast requests and cleanup failures are logged.
+- Coverage review: FWC-01/02/03 cover independent wind sources, invalid and
+  zero readings, unit provenance and both fallback policies; FWC-04/07 cover
+  independent precision, conversion before rounding and legacy options;
+  FWC-05/08 cover subscription identity, stale callbacks, delayed cleanup,
+  timers, chart destruction and reconnect; FWC-06/10/12 cover responsive
+  layouts, Swedish labels and separate gust/speed labels; FWC-09 covers
+  bundled icons with external requests blocked; FWC-11 covers both path
+  formats and cross-platform builds. The mocked browser fixture is not a
+  substitute for manual visual acceptance in Home Assistant.
+- `tests/ha` provides an isolated local HA instance. Its weather entity uses
+  real forecast subscriptions and the controls simulate sensor recovery.
+  The YAML acceptance view and a user-created UI-managed editor playground share
+  the isolated instance, not a production custom-element registration. An
+  automated HA browser run loaded all three cards, switched forecast type, and
+  checked fallback, strict policy, recovery, icon settings and editor controls.
+  One frontend `unknown_command` unhandled rejection occurred before the
+  editor was added; its source is not yet identified. A subsequent run,
+  including independent speed and gust failure/recovery, saw no page errors.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0: build, 61 unit
+  tests and 31 browser tests passed on each. Linux used `npm ci`; Windows used
+  the existing installed dependencies. Bundles were byte-identical with SHA-256
+  `ae78a70275bbb317e3c56e1f1b2a68322c4a7e875b6fcd75fae44937f2b4b643`.
+
+### Compact layout follow-up, 2026-11-26
+
+- FWC-06 remains **visual acceptance pending**. The compact title and forecast
+  toggle share a row; without a title the toggle shares the conditions row.
+  The icon aligns with the temperature, attributes no longer wrap prematurely,
+  and the default layout and chart sizing are unchanged. Compact icons scale
+  down when necessary. The toggle no longer triggers a current-conditions tap
+  action when nested in a titleless compact card.
+- Real HA 2026.11.3, Swedish, static 60 px icon, identical fixture data: header
+  height is measured from the card top to the chart top, in pixels.
+
+  | Width | Variant | Before | After |
+  | --- | --- | ---: | ---: |
+  | 320 | Default, title | 229.4 | 229.4 |
+  | 320 | Compact, title | 315.4 | 195.4 |
+  | 320 | Default, no title | 194.0 | 194.0 |
+  | 320 | Compact, no title | 258.6 | 188.2 |
+  | 600 | Default, title | 229.4 | 229.4 |
+  | 600 | Compact, title | 263.4 | 195.4 |
+  | 600 | Default, no title | 194.0 | 194.0 |
+  | 600 | Compact, no title | 206.6 | 166.6 |
+
+  Charts stayed 180 px high and the same width for matched cards. The existing
+  default titleless layout overlaps its condition and icon at 320 px; it was
+  not changed because preserving that layout was required. Compact controls
+  were checked for overlap; browser regressions also cover RTL, long labels,
+  clock/date, hidden toggle and both icon types.
+- The dedicated comparison view is responsive: all four card widths measured
+  384 px at a 1440 px viewport and 374 px at a 390 px viewport. Separate views
+  retain fallback/recovery, precision and static/animated checks. Real HA
+  automation exercised forecast switching and independent sensor failures and
+  recovery. All chart canvases contained rendered non-white pixels. One
+  frontend rejection was reported as `Object`; the earlier fixture run saw
+  `unknown_command`. Whether these share a cause is unknown.
+- The component stylesheet and current measurement/description resolution
+  were extracted. Local CodeScene 1.0.58 against master reports `main.js`
+  1.84 -> 1.88 (previous branch result 1.68), and editor 4.53 -> 4.74.
+  Individual degraded complexity findings remain in rendering, configuration,
+  subscriptions and editor probing; the stylesheet has a large-method finding,
+  and description resolution remains complex. No findings were suppressed.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0 passed
+  `npm run build`, `npm test` (62/62) and `npm run test:rtl` (35/35).
+  Linux used `npm ci`; Windows used existing dependencies. Both independently
+  built bundles had SHA-256
+  `f303bfcd0a090d58e69187e55fd1ab2ae350b685242368876c1084d4b7895d38`.
+
+### Narrow default-layout overlap follow-up, 2026-11-26
+
+- The earlier 320 px default overlap was fixed without changing the centered
+  icon layout: current-condition text can wrap within the space beside the
+  icon. Geometry tests now assert non-overlap for default and compact cards
+  with static and animated icons. The new assertions failed for both icon
+  types before the fix and pass afterward.
+- In the same real HA fixture, the default titled header at 320 px changed from
+  229.4 to 251.0 px; the default titleless header changed from 194.0 to
+  194.2 px. The 600 px default measurements were unchanged. Compact and chart
+  measurements remain as recorded above. FWC-06 still awaits user visual
+  acceptance.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0 passed the
+  build, 62 unit tests and 35 browser tests. The independently built bundles
+  both had SHA-256
+  `1a332caa54b3e66e0a0d1dbe08087005d67a1ee516c1b37258150e0c7b0a426c`.
+  CodeScene's main and editor delta remained 1.84 -> 1.88 and 4.53 -> 4.74;
+  the extracted stylesheet scored 8.20 and retains its large-method finding.
+- The disposable HA frontend rejection was traced to `recorder/info` with the
+  recorder integration absent. Enabling HA's local recorder in the isolated
+  fixture removed the rejection in a fresh settings-page and dashboard run;
+  its database remains in the dedicated test volume.
+
+### Release preparation, 2026-11-26
+
+- The user approved the real Home Assistant visual acceptance results for
+  FWC-06. All twelve backlog items are complete; FWC-11 was already merged
+  separately into master.
+- Release candidate 1.11.0: Windows Node 26.13.0 and Ubuntu 24.04 container
+  Node 22.20.0 each passed `npm ci`, `npm run build`, `npm test` (62/62),
+  and `npm run test:rtl` (35/35). The independently built 591407-byte bundles
+  were byte-identical with SHA-256
+  `2a754e6dbc2a193326fd1028c1805ba52da3415bd2f73c57a99d02dc9ddeba25`.
+- CodeScene 1.0.58 against master reports main 1.84 -> 1.88 and editor
+  4.53 -> 4.74; the detailed source-level findings recorded above remain.
 
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.
@@ -30,4 +178,4 @@ Status as of 2026-11-26. See BASELINE.md for historical evidence and item entrie
 
 ## Workflow
 
-Each item needs a scoped design, acceptance criteria, regression evidence and review. Reproduce suspected defects before declaring them confirmed. Use separate coherent PRs, preserve backward compatibility, and offer generic fixes upstream. Record unresolved risks and test limits. Release and Boat Assistant deployment are separate decisions after validation.
+Future items need scoped design, regression evidence and review. Preserve backward compatibility and record unresolved risks and test limits. Release and deployment are separate decisions after validation.

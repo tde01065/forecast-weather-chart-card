@@ -1,0 +1,57 @@
+homeassistant:
+  name: Forecast Card Test
+  latitude: 0
+  longitude: 0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+
+frontend:
+config:
+api:
+recorder:
+input_boolean:
+  fixture_speed_available:
+    name: Speed sensor available
+    initial: true
+  fixture_gust_available:
+    name: Gust sensor available
+    initial: true
+
+template:
+  - sensor:
+      - name: Fixture temperature
+        unique_id: fixture_temperature
+        unit_of_measurement: "°F"
+        state: "61.52"
+      - name: Fixture humidity
+        unique_id: fixture_humidity
+        unit_of_measurement: "%"
+        state: "71"
+      - name: Fixture pressure
+        unique_id: fixture_pressure
+        unit_of_measurement: "kPa"
+        state: "101.32"
+      - name: Fixture wind speed
+        unique_id: fixture_wind_speed
+        unit_of_measurement: "km/h"
+        availability: "{{ is_state('input_boolean.fixture_speed_available', 'on') }}"
+        state: "18.36"
+      - name: Fixture wind gust
+        unique_id: fixture_wind_gust
+        unit_of_measurement: "m/s"
+        availability: "{{ is_state('input_boolean.fixture_gust_available', 'on') }}"
+        state: "7.5"
+      - name: Fixture wind bearing
+        unique_id: fixture_wind_bearing
+        unit_of_measurement: "°"
+        state: "225"
+
+weather:
+  - platform: forecast_card_fixture
+
+lovelace:
+  mode: yaml
+  resources:
+    - url: /local/forecast-card/weather-chart-card-ha.js?v=2a754e6dbc2a
+      type: module

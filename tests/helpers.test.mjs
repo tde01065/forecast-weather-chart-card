@@ -5,6 +5,7 @@ import { test } from 'node:test';
 globalThis.window = globalThis;
 const { default: WeatherChartCard } = await import('../src/main.js');
 const { DEFAULTS, FORECAST_DEFAULTS, configValue } = await import('../src/defaults.js');
+const { formatPressure } = await import('../src/measurements.js');
 const actions = await import('../src/actions.js');
 
 // A card with config and hass applied, without rendering it.
@@ -70,6 +71,131 @@ test('#4 missing or unavailable alternative sensors fall back to the weather ent
   assert.equal(card.readSensorState(hass, undefined, 10), 10);
 });
 
+test('wind values keep their own source units, including fallback and unknown units', () => {
+  const card = makeCard({ windspeed: 'sensor.speed', wind_gust_speed: 'sensor.gust', units: { speed: 'm/s' } });
+  const weather = { state: 'sunny', attributes: { wind_speed: 36, wind_gust_speed: 72, wind_speed_unit: 'km/h', supported_features: 0 } };
+  card.hass = {
+    states: {
+      'weather.home': weather,
+      'sensor.speed': { state: '10', attributes: { unit_of_measurement: 'm/s' } },
+      'sensor.gust': { state: '36', attributes: { unit_of_measurement: 'km/h' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  assert.deepEqual(card.formatWindMeasurement(card.windSpeed, card.windSpeedSourceUnit), { value: 10, unit: 'm/s' });
+  assert.deepEqual(card.formatWindMeasurement(card.wind_gust_speed, card.windGustSourceUnit), { value: 10, unit: 'm/s' });
+  assert.deepEqual(card.readWindMeasurement(card._hass, 'sensor.missing', 36, 'km/h'), { value: 36, unit: 'km/h' });
+  assert.deepEqual(card.formatWindMeasurement(12, 'furlongs/h'), { value: 12, unit: 'furlongs/h' });
+  assert.deepEqual(card.formatWindMeasurement(36, undefined), { value: 36, unit: undefined });
+  for (const value of [null, undefined, '', ' ', 'unavailable', 'NaN', Infinity, -1, '12x', '0x10', [], true]) {
+    assert.equal(card.formatWindMeasurement(value, 'm/s').value, undefined);
+  }
+  assert.equal(card.formatWindMeasurement(0, 'm/s').value, 0);
+});
+
+test('alternative fallback policy handles invalid numeric values independently', () => {
+  const states = {
+    'sensor.bad': { state: '12x', attributes: { unit_of_measurement: 'm/s' } },
+    'sensor.zero': { state: '0', attributes: { unit_of_measurement: 'm/s' } },
+    'sensor.no_unit': { state: '5.2', attributes: {} },
+  };
+  const card = makeCard();
+  const hass = { states };
+  for (const id of ['sensor.bad', 'sensor.missing']) {
+    assert.equal(card.readSensorState(hass, id, 11), 11);
+    assert.deepEqual(card.readWindMeasurement(hass, id, 36, 'km/h'), { value: 36, unit: 'km/h' });
+  }
+  assert.equal(card.readSensorState(hass, 'sensor.zero', 11), '0');
+  assert.deepEqual(card.readWindMeasurement(hass, 'sensor.no_unit', 36, 'km/h'), { value: '5.2', unit: undefined });
+  card.setConfig({ entity: 'weather.home', alternative_sensor_fallback: 'strict' });
+  assert.equal(card.readSensorState(hass, 'sensor.bad', 11), undefined);
+  assert.equal(card.readWindMeasurement(hass, 'sensor.bad', 36, 'km/h').value, undefined);
+  assert.equal(card.readSensorState(hass, undefined, 11), 11, 'unconfigured sensors still use weather data');
+  assert.equal(card.readSensorState(hass, 'sensor.zero', 11), '0');
+});
+
+test('alternative temperature and pressure measurements use the selected source units', () => {
+  const card = makeCard({ temp: 'sensor.temp', press: 'sensor.press', units: { temperature: '°C', pressure: 'hPa' } });
+  card.hass = {
+    states: {
+      'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', pressure: 1000, pressure_unit: 'hPa', supported_features: 0 } },
+      'sensor.temp': { state: '68', attributes: { unit_of_measurement: '°F' } },
+      'sensor.press': { state: '101.325', attributes: { unit_of_measurement: 'kPa' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  assert.deepEqual(card.formatTemperatureMeasurement(card.temperature, card.temperatureSourceUnit), { value: 20, unit: '°C' });
+  assert.deepEqual(formatPressure(card.pressure, card.pressureSourceUnit, card.unitPressure), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(card.formatTemperatureMeasurement(30, undefined), { value: 30, unit: undefined });
+  assert.deepEqual(card.formatTemperatureMeasurement(30, 'unknown'), { value: 30, unit: 'unknown' });
+});
+
+test('current measurement resolution preserves zero, source units and strict visibility fallback', () => {
+  const card = makeCard({ temp: 'sensor.temp', visibility: 'sensor.visibility', alternative_sensor_fallback: 'strict' });
+  const hass = {
+    states: {
+      'weather.home': { state: 'sunny', attributes: { temperature: 20, temperature_unit: '°C', visibility: 10, visibility_unit: 'km', supported_features: 0 } },
+      'sensor.temp': { state: '0', attributes: { unit_of_measurement: '°F' } },
+      'sensor.visibility': { state: '0', attributes: { unit_of_measurement: 'mi' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  card.hass = hass;
+  assert.equal(card.temperature, '0');
+  assert.equal(card.temperatureSourceUnit, '°F');
+  assert.equal(card.visibility, '0');
+  assert.equal(card.visibilitySourceUnit, 'mi');
+  hass.states['sensor.visibility'] = { state: 'unavailable', attributes: { unit_of_measurement: 'mi' } };
+  card.hass = hass;
+  assert.equal(card.visibility, undefined);
+  assert.equal(card.visibilitySourceUnit, 'km');
+  card.setConfig({ entity: 'weather.home', visibility: 'sensor.visibility' });
+  assert.equal(card.visibility, 10);
+  assert.equal(card.visibilitySourceUnit, 'km');
+});
+
+test('changing fallback policy immediately re-evaluates current sensors', () => {
+  const card = makeCard({ windspeed: 'sensor.wind' });
+  const hass = {
+    states: {
+      'weather.home': { state: 'sunny', attributes: { wind_speed: 5, wind_speed_unit: 'm/s', supported_features: 0 } },
+      'sensor.wind': { state: 'unavailable', attributes: { unit_of_measurement: 'm/s' } },
+    },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C' } },
+  };
+  card.hass = hass;
+  assert.equal(card.windSpeed, 5);
+  card.setConfig({ entity: 'weather.home', windspeed: 'sensor.wind', alternative_sensor_fallback: 'strict' });
+  assert.equal(card.windSpeed, undefined);
+  card.setConfig({ entity: 'weather.home', windspeed: 'sensor.wind' });
+  assert.equal(card.windSpeed, 5);
+});
+
+test('forecast chart redraws when selected forecast source units change', () => {
+  const card = makeCard({ forecast: { daily_entity: 'weather.forecast' }, units: { precipitation: 'mm' } });
+  const main = { state: 'sunny', attributes: { temperature_unit: '°C', supported_features: 0 } };
+  const forecast = { state: 'sunny', attributes: { temperature_unit: '°C', precipitation_unit: 'mm', supported_features: 1 } };
+  const hass = { states: { 'weather.home': main, 'weather.forecast': forecast },
+    config: { time_zone: 'UTC', unit_system: { temperature: '°C', length: 'km' } } };
+  card.hass = hass;
+  card.forecastChart = {};
+  card._chartUnitsKey = card.chartUnitsKey();
+  let redraws = 0;
+  card.drawChart = () => { redraws++; card._chartUnitsKey = card.chartUnitsKey(); };
+  card.hass = { ...hass };
+  assert.equal(redraws, 0, 'unrelated updates do not rebuild the chart');
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: 'unknown', precipitation_unit: 'in' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 1);
+  assert.deepEqual(card.chartUnits(), { temperature: 'unknown', precipitation: 'mm', sourceTemperature: 'unknown', sourcePrecipitation: 'in' });
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: '°F', precipitation_unit: 'in' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 2);
+  hass.states['weather.forecast'] = { ...forecast, attributes: { ...forecast.attributes, temperature_unit: '°C', precipitation_unit: 'mm' } };
+  card.hass = { ...hass };
+  assert.equal(redraws, 3, 'source changes redraw even when display units stay the same');
+});
+
 test('#5 #13 the stub and the card share one set of defaults', () => {
   const stub = WeatherChartCard.getStubConfig({}, ['weather.home'], ['weather.home']);
   assert.equal(stub.entity, 'weather.home');
@@ -105,15 +231,17 @@ test('#10 precipitation bars use the display unit, with a matching axis ceiling'
 });
 
 test('#11 pressure converts between every Home Assistant unit', () => {
-  const card = makeCard();
-  assert.deepEqual(card.formatPressure(1013.25, 'hPa', 'inHg'), { value: '29.92', unit: 'inHg' });
-  assert.deepEqual(card.formatPressure(1013.25, 'mbar', 'hPa'), { value: 1013, unit: 'hPa' });
-  assert.deepEqual(card.formatPressure(101.325, 'kPa', 'hPa'), { value: 1013, unit: 'hPa' });
-  assert.deepEqual(card.formatPressure(14.696, 'psi', 'mmHg'), { value: 760, unit: 'mmHg' });
-  assert.deepEqual(card.formatPressure(1013.25, 'hPa', 'kPa'), { value: '101.3', unit: 'kPa' });
+  assert.deepEqual(formatPressure(1013.25, 'hPa', 'inHg'), { value: '29.92', unit: 'inHg' });
+  assert.deepEqual(formatPressure(1013.25, 'mbar', 'hPa'), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(formatPressure(101.325, 'kPa', 'hPa'), { value: 1013, unit: 'hPa' });
+  assert.deepEqual(formatPressure(14.696, 'psi', 'mmHg'), { value: 760, unit: 'mmHg' });
+  assert.deepEqual(formatPressure(1013.25, 'hPa', 'kPa'), { value: '101.3', unit: 'kPa' });
   // An unknown unit is shown as reported, labelled with its own unit.
-  assert.deepEqual(card.formatPressure(1013.25, 'weird', 'hPa'), { value: 1013, unit: 'weird' });
-  assert.deepEqual(card.formatPressure(undefined, 'hPa', 'hPa'), { value: undefined, unit: 'hPa' });
+  assert.deepEqual(formatPressure(1013.25, 'weird', 'hPa'), { value: 1013, unit: 'weird' });
+  assert.deepEqual(formatPressure(0, undefined, 'hPa'), { value: 0, unit: undefined });
+  assert.deepEqual(formatPressure(100, 'constructor', 'hPa'), { value: 100, unit: 'constructor' });
+  assert.deepEqual(formatPressure(100, 'hPa', '__proto__'), { value: 100, unit: 'hPa' });
+  assert.deepEqual(formatPressure(undefined, 'hPa', 'hPa'), { value: undefined, unit: 'hPa' });
 });
 
 test('#16 unknown and unavailable conditions fall back to Home Assistant translations', () => {
@@ -225,6 +353,97 @@ test('without auto-rotate only the forecast on screen stays subscribed', () => {
   card.handleForecastTypeToggle();
   assert.deepEqual(subscribed, ['daily', 'hourly']);
   assert.deepEqual(Object.keys(card._forecastSubscriptions), ['hourly']);
+});
+
+test('stale forecast callbacks cannot replace data after toggling or changing entity', () => {
+  const callbacks = [];
+  const supported = { state: 'sunny', attributes: { supported_features: 3 } };
+  const card = makeCard({}, {
+    states: { 'weather.home': supported, 'weather.other': supported },
+    connection: { subscribeMessage(callback, message) {
+      callbacks.push({ callback, message });
+      return Promise.resolve(() => {});
+    } },
+  });
+  card.drawChart = () => {};
+  card.updateChart = () => {};
+  card.syncForecastSubscriptions();
+  const daily = [{ temperature: 1 }];
+  callbacks[0].callback({ forecast: daily });
+  card.handleForecastTypeToggle();
+  assert.deepEqual(card.forecasts, [], 'old daily data is not displayed while hourly loads');
+  callbacks[1].callback({ forecast: [{ temperature: 2 }] });
+  card.handleForecastTypeToggle();
+  callbacks[0].callback({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(card.forecasts, [], 'closed daily callback cannot populate its replacement');
+  callbacks[2].callback({ forecast: daily });
+  card.setConfig({ entity: 'weather.other' });
+  card.syncForecastSubscriptions();
+  callbacks[2].callback({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(card.forecasts, [], 'data from the old entity is cleared');
+  callbacks[3].callback({ forecast: [{ temperature: 3 }] });
+  assert.deepEqual(card.forecasts, [{ temperature: 3 }]);
+});
+
+test('hiding a forecast closes its subscriptions and rejects late callbacks', () => {
+  const callbacks = [];
+  const card = makeCard({}, {
+    states: { 'weather.home': { state: 'sunny', attributes: { supported_features: 3 } } },
+    connection: { subscribeMessage(callback) {
+      callbacks.push(callback);
+      return Promise.resolve(() => {});
+    } },
+  });
+  card.drawChart = () => {};
+  card.syncForecastSubscriptions();
+  callbacks[0]({ forecast: [{ temperature: 10 }] });
+  card.setConfig({ entity: 'weather.home', show_forecast: false });
+  card.syncForecastSubscriptions();
+  callbacks[0]({ forecast: [{ temperature: 99 }] });
+  assert.deepEqual(Object.keys(card._forecastSubscriptions), []);
+  assert.notDeepEqual(card.forecasts, [{ temperature: 99 }]);
+});
+
+test('delayed subscription cleanup and connection replacement reject stale callbacks', async () => {
+  const callbacks = [];
+  let resolveUnsubscribe;
+  let closed = 0;
+  const oldConnection = { subscribeMessage(callback) {
+    callbacks.push(callback);
+    return new Promise(resolve => { resolveUnsubscribe = resolve; });
+  } };
+  const card = makeCard({}, {
+    states: { 'weather.home': { state: 'sunny', attributes: { supported_features: 3 } } },
+    connection: oldConnection,
+  });
+  card.drawChart = () => {};
+  card.syncForecastSubscriptions();
+  card._hass.connection = { subscribeMessage(callback) {
+    callbacks.push(callback);
+    return Promise.resolve(() => {});
+  } };
+  card.syncForecastSubscriptions();
+  callbacks[0]({ forecast: [{ temperature: 99 }] });
+  assert.notDeepEqual(card.forecasts, [{ temperature: 99 }]);
+  callbacks[1]({ forecast: [{ temperature: 10 }] });
+  assert.deepEqual(card.forecasts, [{ temperature: 10 }]);
+  resolveUnsubscribe(() => closed++);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(closed, 1);
+  let destroyed = 0;
+  card.forecastChart = { destroy() { destroyed++; } };
+  callbacks[1]({ forecast: [] });
+  assert.equal(destroyed, 1);
+  assert.equal(card.forecastChart, null);
+});
+
+test('Swedish forecast names and cardinal directions are localized', () => {
+  const card = makeCard({ locale: 'sv' });
+  assert.equal(card.ll('daily'), 'Dygnsprognos');
+  assert.equal(card.ll('hourly'), 'Timprognos');
+  assert.equal(card.getWindDirLabel(45), 'NO');
+  assert.equal(card.getWindDirLabel('NE'), 'NO');
+  assert.equal(card.getWindDirLabel(225), 'SV');
 });
 
 test('a single-point temperature gradient has a valid stop offset', () => {
@@ -391,6 +610,20 @@ test('a missing low leaves a gap instead of shifting later lows', () => {
   assert.deepEqual(data.probability, [40, null, null]);
 });
 
+test('invalid forecast measurements remain gaps rather than turning into zero', () => {
+  const card = makeCard({}, { states: { 'weather.home': { attributes: { temperature_unit: '°C', precipitation_unit: 'mm', supported_features: 3 } } } });
+  card.forecasts = [
+    { temperature: null, templow: '', precipitation: '', precipitation_probability: null },
+    { temperature: 0, templow: 0, precipitation: 0, precipitation_probability: 0 },
+    { temperature: 'bad', templow: Infinity, precipitation: -1, precipitation_probability: 101 },
+  ];
+  const data = card.computeForecastData({ config: card.config, forecastItems: 3 });
+  assert.deepEqual(data.tempHigh, [null, 0, null]);
+  assert.deepEqual(data.tempLow, [null, 0, null]);
+  assert.deepEqual(data.precip, [null, 0, null]);
+  assert.deepEqual(data.probability, [null, 0, null]);
+});
+
 test('hourly slots are night between sunset and sunrise at the card location', () => {
   const card = makeCard({ sun_latitude: 51.5, sun_longitude: 0, sun_timezone: 'Europe/London' });
   const location = { ...card.getSunLocation(), timeZone: card.getSunTimezone() };
@@ -417,6 +650,51 @@ test('round_temp rounds the current temperature and feels like too', () => {
   assert.equal(String(makeCard({ forecast: { round_temp: true } }).roundTemperature(-0.4)), '0');
   assert.equal(makeCard().roundTemperature(11.36), 11.4);
   assert.ok(Number.isNaN(makeCard().roundTemperature(NaN)));
+});
+
+test('wind precision rounds only after conversion and keeps Beaufort integral', () => {
+  const card = makeCard({ units: { speed: 'm/s' } });
+  assert.deepEqual(card.formatWindMeasurement(18.36, 'km/h', 'm/s', 1), { value: '5.1', unit: 'm/s' });
+  assert.deepEqual(card.formatWindMeasurement(0, 'm/s', 'm/s', 1), { value: '0.0', unit: 'm/s' });
+  assert.deepEqual(card.formatWindMeasurement(18, 'km/h', 'Bft', 2), { value: 3, unit: 'Bft' });
+  assert.equal(card.formatWindMeasurement(13, 'Bft', 'm/s').value, undefined);
+  assert.equal(card.formatWindMeasurement(3.2, 'Bft', 'm/s').value, undefined);
+  assert.ok(Math.abs(card.convertWindSpeed(4, 'm/s', 'Bft') - 6.688) < 1e-10);
+  assert.deepEqual(card.formatWindMeasurement(5.4, 'm/s', 'm/s', 9), { value: 5, unit: 'm/s' });
+  assert.equal(card.convertWindSpeed(18.36, 'm/s', 'km/h'), 5.1);
+});
+
+test('temperature precision overrides legacy rounding independently without rounding chart data', () => {
+  const card = makeCard({
+    precision: { temperature: 2 },
+    forecast: { round_temp: true, precision: { hourly_temperature: 1, daily_temperature: 2 } },
+  }, { states: { 'weather.home': { attributes: { temperature_unit: '°C', supported_features: 3 } } } });
+  card.forecasts = [{ datetime: '2026-10-21T00:00:00Z', temperature: 11.234, templow: 0.456 }];
+  assert.equal(card.roundTemperature(11.234), 11.23);
+  assert.equal(card.roundTemperature(11.234, 'hourly'), 11.2);
+  assert.equal(card.roundTemperature(11.234, 'daily'), 11.23);
+  assert.deepEqual(card.computeForecastData({ config: card.config, forecastItems: 1 }).tempHigh, [11.234]);
+  const fallback = makeCard({ precision: { temperature: -1 }, forecast: { round_temp: true, precision: { daily_temperature: '1' } } });
+  assert.equal(fallback.roundTemperature(11.6), 12);
+  assert.equal(fallback.roundTemperature(11.6, 'daily'), 12);
+  for (const legacy of [false, true]) {
+    for (const current of [undefined, 0, 1, 2, -1]) {
+      for (const hourly of [undefined, 0, 1, 2, -1]) {
+        for (const daily of [undefined, 0, 1, 2, -1]) {
+          const c = makeCard({ precision: { temperature: current }, forecast: {
+            round_temp: legacy, precision: { hourly_temperature: hourly, daily_temperature: daily },
+          } });
+          const expected = p => {
+            const places = [0, 1, 2].includes(p) ? p : legacy ? 0 : 1;
+            return Math.round(11.236 * 10 ** places) / 10 ** places;
+          };
+          assert.equal(c.roundTemperature(11.236), expected(current));
+          assert.equal(c.roundTemperature(11.236, 'hourly'), expected(hourly));
+          assert.equal(c.roundTemperature(11.236, 'daily'), expected(daily));
+        }
+      }
+    }
+  }
 });
 
 test('the three icon folders hold the same icon names', async () => {
@@ -511,6 +789,11 @@ test('a compass name gets the same arrow as its bearing in degrees', () => {
   // The arrow shows where the wind blows to: a north wind points south.
   assert.equal(card.getWindDirIcon('N'), 'arrow-down');
   assert.equal(card.getWindDirIcon('WNW'), 'arrow-bottom-right');
+  assert.equal(card.getWindDir(-45), card.getWindDir(315));
+  assert.equal(card.getWindDir('405'), card.getWindDir(45));
+  assert.equal(card.getWindDirIcon(720), card.getWindDirIcon(0));
+  assert.equal(card.getWindDir('unavailable'), null);
+  assert.equal(card.getWindDirIcon(Infinity), null);
 });
 
 test('the wind forecast names the direction under the arrow, unless turned off', () => {
@@ -658,7 +941,7 @@ test('sun times come from sun.sun unless the card has its own location', () => {
 test('#61 description_attribute reads an attribute, falling back to the weather description', () => {
   const states = {
     'weather.home': { state: 'sunny', attributes: { description: 'Weather text', summary: 'Own summary' } },
-    'sensor.owm_summary': { state: '2026-11-10T12:00:00+00:00', attributes: { content: 'Rain from 15:00, clearing tonight.' } },
+    'sensor.owm_summary': { state: '2026-11-10T12:00:00+00:00', attributes: { content: 'Rain from 15:00, clearing tonight.', details: { rain: true }, blank: '  ' } },
     'sensor.plain': { state: 'Plain state text', attributes: {} },
     'sensor.down': { state: 'unavailable', attributes: { content: '' } },
   };
@@ -677,6 +960,10 @@ test('#61 description_attribute reads an attribute, falling back to the weather 
   assert.equal(read({ description: 'sensor.gone', description_attribute: 'content' }), 'Weather text');
   assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'nope' }), 'Weather text');
   assert.equal(read({ description: 'sensor.down', description_attribute: 'content' }), 'Weather text');
+  assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'details' }), '{"rain":true}');
+  assert.equal(read({ description: 'sensor.owm_summary', description_attribute: 'blank', alternative_sensor_fallback: 'strict' }), undefined);
+  assert.equal(read({ description: 'sensor.down', alternative_sensor_fallback: 'strict' }), undefined);
+  assert.equal(read({ description_attribute: 'missing', alternative_sensor_fallback: 'strict' }), 'Weather text');
 });
 
 test('a missing last_changed timestamp does not break the card', () => {
@@ -732,4 +1019,74 @@ test('the editor asks the shown forecast whether it carries precipitation probab
   other._probeProbability();
   await flush();
   assert.equal(other._hasProbability, undefined);
+});
+
+test('editor forecast probes ignore replaced connections and close delayed subscriptions', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let resolveOld;
+  let oldCallback;
+  let newCallback;
+  let closed = 0;
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    oldCallback = callback;
+    return new Promise(resolve => { resolveOld = resolve; });
+  } } };
+  editor._probeProbability();
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    newCallback = callback;
+    return Promise.resolve(() => { closed++; });
+  } } };
+  editor._probeProbability();
+  oldCallback({ forecast: [{ precipitation_probability: 0 }] });
+  assert.equal(editor._hasProbability, undefined);
+  newCallback({ forecast: [{}] });
+  assert.equal(editor._hasProbability, false);
+  oldCallback({ forecast: [{ precipitation_probability: 50 }] });
+  assert.equal(editor._hasProbability, false);
+  resolveOld(() => { closed++; });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(closed, 2);
+});
+
+test('editor closes a forecast probe even when the first event is synchronous', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let closed = 0;
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    callback({ forecast: [{ precipitation_probability: 0 }] });
+    return () => { closed++; };
+  } } };
+  editor._probeProbability();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(editor._hasProbability, true);
+  assert.equal(closed, 1);
+});
+
+test('editor does not restart forecast probes while detached', async () => {
+  const Editor = customElements.get('weather-chart-card-ha-editor');
+  let count = 0;
+  let closed = 0;
+  const callbacks = [];
+  const editor = new Editor();
+  editor.setConfig({ entity: 'weather.home' });
+  editor.hass = { states: {}, connection: { subscribeMessage(callback) {
+    count++;
+    callbacks.push(callback);
+    return Promise.resolve(() => { closed++; });
+  } } };
+  editor._probeProbability();
+  editor.disconnectedCallback();
+  editor._probeProbability();
+  callbacks[0]({ forecast: [{ precipitation_probability: 0 }] });
+  assert.equal(editor._hasProbability, undefined);
+  assert.equal(count, 1);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(closed, 1);
+  editor._probabilityDetached = false;
+  editor._probeProbability();
+  assert.equal(count, 2);
+  editor.disconnectedCallback();
 });

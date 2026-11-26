@@ -1,40 +1,76 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { chromium } from 'playwright';
+import { startPreview } from '../scripts/preview.mjs';
 
 const localeSource = readFileSync(new URL('../src/locale.js', import.meta.url), 'utf8');
 const { default: locale } = await import('data:text/javascript;base64,' + Buffer.from(localeSource).toString('base64'));
 const bundle = readFileSync(new URL('../dist/weather-chart-card-ha.js', import.meta.url), 'utf8');
-const preview = readFileSync(new URL('../preview.html', import.meta.url), 'utf8');
 let browser;
 before(async () => {
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'msedge' : undefined) });
 });
 after(async () => { await browser?.close(); });
 
-test('local preview compares default and compact cards and simulates sensor failure', async () => {
-  const page = await browser.newPage();
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
-  try {
-    await page.route('**/*', route => {
-      const path = new URL(route.request().url()).pathname;
-      if (path === '/preview.html') return route.fulfill({ contentType: 'text/html', body: preview });
-      if (path === '/dist/weather-chart-card-ha.js') return route.fulfill({ contentType: 'text/javascript', body: bundle });
-      return route.abort();
+for (const { name, width } of [{ name: 'desktop', width: 1280 }, { name: 'narrow', width: 390 }]) {
+  test(`HTTP preview renders and responds to controls: ${name}`, async () => {
+    const server = await startPreview(0);
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(`page: ${error.message}`));
+    page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
+    page.on('requestfailed', request => errors.push(`request: ${request.url()} ${request.failure()?.errorText}`));
+    page.on('response', response => {
+      if (response.status() >= 400) errors.push(`HTTP ${response.status()}: ${response.url()}`);
     });
-    await page.goto('http://preview.test/preview.html');
-    await page.waitForFunction(() => [...document.querySelectorAll('weather-chart-card-ha')].every(card => card.forecastChart));
-    assert.equal(await page.locator('#compact .wind-speed-attribute').textContent(), '5.1 m/s');
-    await page.locator('#sensor').click();
-    await page.waitForFunction(() => !document.querySelector('#compact').shadowRoot.querySelector('.wind-speed-attribute'));
-    assert.equal(await page.locator('#compact .wind-gust-speed').textContent(), '7.5 m/s');
-    await page.locator('#compact .forecast-toggle').click();
-    await page.waitForFunction(() => document.querySelector('#compact').config.forecast.type === 'hourly');
-    assert.deepEqual(errors, []);
-  } finally { await page.close(); }
-});
+    try {
+      await page.goto(`http://127.0.0.1:${server.address().port}/preview.html`);
+      await page.waitForFunction(() => [...document.querySelectorAll('weather-chart-card-ha')].length === 2
+        && [...document.querySelectorAll('weather-chart-card-ha')].every(card =>
+          card.forecastChart && card.forecasts.length > 1 && card.shadowRoot?.querySelector('.current-temp')));
+      for (const id of ['default', 'compact']) {
+        const card = page.locator(`#${id}`);
+        for (const selector of ['.current-temp', '.current-condition', '.weather-icon img', '.attributes', '.wind-speed-attribute', '#forecastChart']) {
+          assert.equal(await card.locator(selector).isVisible(), true, `${id} ${selector} must be visible`);
+        }
+        assert.match((await card.locator('.current-temp').textContent()).trim(), /16\.4/);
+        assert.ok((await card.locator('.current-condition').textContent()).trim());
+        assert.ok(await card.locator('.weather-icon img').evaluate(image => image.complete && image.naturalWidth > 0));
+        assert.ok(await card.evaluate(element => element.forecastChart.data.datasets[0].data.length > 0));
+      }
+      assert.equal(await page.locator('#compact .wind-speed-attribute').textContent(), '5.1 m/s');
+      if (process.env.PREVIEW_SCREENSHOT_DIR) {
+        await page.screenshot({ path: join(process.env.PREVIEW_SCREENSHOT_DIR, `preview-${name}.png`), fullPage: true });
+      }
+      for (const id of ['default', 'compact']) {
+        await page.locator(`#${id} .forecast-toggle`).click();
+        await page.waitForFunction(cardId => {
+          const card = document.getElementById(cardId);
+          return card.config.forecast.type === 'hourly' && card.forecastChart && card.forecasts.length > 1
+            && Date.parse(card.forecasts[1].datetime) - Date.parse(card.forecasts[0].datetime) === 3600000;
+        }, id);
+        await page.locator(`#${id} .forecast-toggle`).click();
+        await page.waitForFunction(cardId => {
+          const card = document.getElementById(cardId);
+          return card.config.forecast.type === 'daily' && card.forecastChart && card.forecasts.length > 1
+            && Date.parse(card.forecasts[1].datetime) - Date.parse(card.forecasts[0].datetime) === 86400000;
+        }, id);
+      }
+      await page.locator('#sensor').click();
+      await page.waitForFunction(() => !document.querySelector('#compact').shadowRoot.querySelector('.wind-speed-attribute'));
+      assert.equal(await page.locator('#compact .wind-gust-speed').textContent(), '7.5 m/s');
+      assert.equal(await page.locator('#default .wind-speed-attribute').isVisible(), true);
+      await page.locator('#sensor').click();
+      await page.waitForFunction(() => document.querySelector('#compact').shadowRoot.querySelector('.wind-speed-attribute')?.textContent === '5.1 m/s');
+      assert.deepEqual(errors, []);
+    } finally {
+      await page.close();
+      await new Promise((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
+    }
+  });
+}
 
 for (const { width, language, title, clock, toggle } of [
   { width: 320, language: 'sv', title: '', clock: false, toggle: true },

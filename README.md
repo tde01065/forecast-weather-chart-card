@@ -611,8 +611,10 @@ Example:
 For developers who want to test changes without installing the card in Home Assistant, we provide a comprehensive test suite with mock data and interactive controls.
 
 For a side-by-side default and compact preview of the **built bundle**, run
-`python -m http.server 5500 --bind 127.0.0.1` from the repository root and
-open `http://127.0.0.1:5500/preview.html`. It uses mock data and minimal Home
+`npm run preview` from the repository root and open
+`http://127.0.0.1:5501/preview.html`. The preview server binds only to localhost,
+serves the bundle from this checkout with an explicit JavaScript content type,
+and reports an error if port 5501 is occupied. It uses mock data and minimal Home
 Assistant element stand-ins; it is not connected to Home Assistant. The sensor
 button demonstrates strict fallback. Run `npm run build` first after changing
 source files.

@@ -12,6 +12,7 @@
 - `show_version`: hide the card version in the bottom corner (default `true`, shown as before).
 
 ### Fixed
+- The local preview now has a dedicated localhost server that serves the correct bundle with a JavaScript content type and reports occupied ports. Browser smoke tests exercise real HTTP responses rather than intercepted fixtures.
 - Invalid or missing measurements no longer become zero; alternative temperature, pressure and visibility readings retain their own source units. Forecast chart calculations retain temperature precision.
 - Forecast subscriptions reject callbacks from replaced connections and handle delayed cleanup; detached cards no longer restart their clock or chart work.
 - Current wind speed and gust use their own sensor units; forecast wind uses its forecast entity's unit. Values with unknown or missing units are not relabelled as converted values, and invalid wind speeds are hidden.

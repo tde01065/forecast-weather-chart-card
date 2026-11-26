@@ -53,6 +53,10 @@ export function renderCardStyles(config) {
           flex-direction: column;
           z-index: 2;
         }
+        .card:not(.compact) .main .temp-info {
+          max-width: max(0px, calc((100% - ${config.main_icon_size || 150}px) / 2));
+          overflow-wrap: anywhere;
+        }
         .main .temp-info > div {
           line-height: 1.2;
         }

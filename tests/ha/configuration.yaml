@@ -9,6 +9,7 @@ homeassistant:
 frontend:
 config:
 api:
+recorder:
 input_boolean:
   fixture_speed_available:
     name: Speed sensor available
@@ -52,5 +53,5 @@ weather:
 lovelace:
   mode: yaml
   resources:
-    - url: /local/forecast-card/weather-chart-card-ha.js?v=f303bfcd0a09
+    - url: /local/forecast-card/weather-chart-card-ha.js?v=1a332caa54b3
       type: module

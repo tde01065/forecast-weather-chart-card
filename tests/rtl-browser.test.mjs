@@ -269,6 +269,10 @@ for (const width of [320, 600]) {
           assert.ok(compact.chart.top - compact.card.top < normal.chart.top - normal.card.top, JSON.stringify({ normal, compact }));
           assert.equal(compact.chart.height, normal.chart.height);
           assert.equal(compact.chart.width, normal.chart.width);
+          assert.equal(overlaps(normal.temp, normal.icon), false, JSON.stringify(normal));
+          assert.equal(overlaps(normal.toggle, normal.icon), false, JSON.stringify(normal));
+          assert.equal(overlaps(normal.toggle, normal.temp), false, JSON.stringify(normal));
+          assert.equal(normal.overflow, false);
           assert.ok(Math.abs(compact.icon.top - compact.temp.top) < 2);
           assert.equal(overlaps(compact.temp, compact.icon), false);
           assert.equal(overlaps(compact.toggle, compact.icon), false);

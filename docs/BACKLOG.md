@@ -131,6 +131,29 @@ See BASELINE.md for historical evidence. This branch integrates the remaining it
   built bundles had SHA-256
   `f303bfcd0a090d58e69187e55fd1ab2ae350b685242368876c1084d4b7895d38`.
 
+### Narrow default-layout overlap follow-up, 2026-11-26
+
+- The earlier 320 px default overlap was fixed without changing the centered
+  icon layout: current-condition text can wrap within the space beside the
+  icon. Geometry tests now assert non-overlap for default and compact cards
+  with static and animated icons. The new assertions failed for both icon
+  types before the fix and pass afterward.
+- In the same real HA fixture, the default titled header at 320 px changed from
+  229.4 to 251.0 px; the default titleless header changed from 194.0 to
+  194.2 px. The 600 px default measurements were unchanged. Compact and chart
+  measurements remain as recorded above. FWC-06 still awaits user visual
+  acceptance.
+- Windows Node 26.13.0 and Ubuntu 24.04 container Node 22.20.0 passed the
+  build, 62 unit tests and 35 browser tests. The independently built bundles
+  both had SHA-256
+  `1a332caa54b3e66e0a0d1dbe08087005d67a1ee516c1b37258150e0c7b0a426c`.
+  CodeScene's main and editor delta remained 1.84 -> 1.88 and 4.53 -> 4.74;
+  the extracted stylesheet scored 8.20 and retains its large-method finding.
+- The disposable HA frontend rejection was traced to `recorder/info` with the
+  recorder integration absent. Enabling HA's local recorder in the isolated
+  fixture removed the rejection in a fresh settings-page and dashboard run;
+  its database remains in the dedicated test volume.
+
 - TD-01: npm ci reported deprecated inflight 1.0.6.
 - TD-02: npm ci reported deprecated glob 7.2.3.
 - TD-03: npm ci reported deprecated ESLint 9.39.5.

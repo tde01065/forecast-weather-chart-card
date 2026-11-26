@@ -7,6 +7,7 @@ not use the production Home Assistant configuration, credentials, integrations
 or entities. The test-only integration supplies deterministic conditions and
 daily/hourly forecasts through Home Assistant's weather subscription API.
 Forecast timestamps advance with the clock; values are deterministic.
+Home Assistant's local recorder stores its test database in the dedicated volume.
 
 From the repository root in PowerShell, with Docker Desktop running:
 

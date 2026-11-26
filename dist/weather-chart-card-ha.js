@@ -1082,6 +1082,10 @@ function kt(t){return t+.5|0}customElements.get("weather-chart-card-ha-editor")|
           flex-direction: column;
           z-index: 2;
         }
+        .card:not(.compact) .main .temp-info {
+          max-width: max(0px, calc((100% - ${t.main_icon_size||150}px) / 2));
+          overflow-wrap: anywhere;
+        }
         .main .temp-info > div {
           line-height: 1.2;
         }
